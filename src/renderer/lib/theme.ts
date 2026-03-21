@@ -1,0 +1,26 @@
+import type { ITheme } from '@xterm/xterm';
+
+export const DARK_THEME: ITheme = {
+  background: '#111111',
+  foreground: '#e0e0e0',
+  cursor: '#e0e0e0',
+  cursorAccent: '#111111',
+  selectionBackground: '#3a3a3a',
+  selectionForeground: '#ffffff',
+  black: '#111111',
+  red: '#ff6b6b',
+  green: '#51cf66',
+  yellow: '#ffd43b',
+  blue: '#74c0fc',
+  magenta: '#cc5de8',
+  cyan: '#66d9e8',
+  white: '#e0e0e0',
+  brightBlack: '#4a4a4a',
+  brightRed: '#ff8787',
+  brightGreen: '#69db7c',
+  brightYellow: '#ffe066',
+  brightBlue: '#91d5ff',
+  brightMagenta: '#da77f2',
+  brightCyan: '#99e9f2',
+  brightWhite: '#ffffff',
+};
