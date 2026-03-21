@@ -40,10 +40,18 @@ npm install
 echo "Building Termy.app..."
 npm run package
 
+INSTALL_PATH="/Applications/Termy.app"
+
+# Copy to /Applications
+if [ -d "$INSTALL_PATH" ]; then
+  rm -rf "$INSTALL_PATH"
+fi
+cp -R "$APP_PATH" "$INSTALL_PATH"
+
 # Clear quarantine attribute
-xattr -rd com.apple.quarantine "$APP_PATH" 2>/dev/null || true
+xattr -rd com.apple.quarantine "$INSTALL_PATH" 2>/dev/null || true
 
 echo "Build complete. Relaunching..."
-open "$APP_PATH"
+open "$INSTALL_PATH"
 
 echo "$(date): Update complete"

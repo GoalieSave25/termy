@@ -21,7 +21,7 @@ else
 fi
 
 APP_PATH="$REPO_DIR/out/Termy-darwin-$OUT_ARCH/Termy.app"
-SYMLINK_PATH="/Applications/Termy.app"
+INSTALL_PATH="/Applications/Termy.app"
 
 echo "Installing Termy from $REPO_DIR..."
 
@@ -40,24 +40,22 @@ if [ ! -d "$APP_PATH" ]; then
   exit 1
 fi
 
-# Create /Applications symlink
-if [ -L "$SYMLINK_PATH" ]; then
-  rm "$SYMLINK_PATH"
-elif [ -d "$SYMLINK_PATH" ]; then
-  echo "Warning: $SYMLINK_PATH exists and is not a symlink. Remove it manually to use the symlink."
+# Copy to /Applications (shows as a real app, not an alias)
+if [ -L "$INSTALL_PATH" ]; then
+  rm "$INSTALL_PATH"
+elif [ -d "$INSTALL_PATH" ]; then
+  rm -rf "$INSTALL_PATH"
 fi
 
-if [ ! -e "$SYMLINK_PATH" ]; then
-  ln -s "$APP_PATH" "$SYMLINK_PATH"
-  echo "Linked $SYMLINK_PATH → $APP_PATH"
-fi
+cp -R "$APP_PATH" "$INSTALL_PATH"
+echo "Installed to $INSTALL_PATH"
 
 # Write source directory breadcrumb for auto-updater
 mkdir -p "$CONFIG_DIR"
 echo "$REPO_DIR" > "$SOURCE_DIR_FILE"
 
 # Clear quarantine attribute
-xattr -rd com.apple.quarantine "$APP_PATH" 2>/dev/null || true
+xattr -rd com.apple.quarantine "$INSTALL_PATH" 2>/dev/null || true
 
 echo ""
 echo "Termy installed successfully!"
