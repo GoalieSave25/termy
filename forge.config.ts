@@ -11,6 +11,17 @@ function copyNodePty(buildPath: string) {
   const src = path.join(__dirname, 'node_modules', 'node-pty');
   const dest = path.join(buildPath, 'node_modules', 'node-pty');
   fs.cpSync(src, dest, { recursive: true });
+
+  // Ensure spawn-helper binaries are executable (npm ships them as 644)
+  const prebuilds = path.join(dest, 'prebuilds');
+  if (fs.existsSync(prebuilds)) {
+    for (const dir of fs.readdirSync(prebuilds)) {
+      const helper = path.join(prebuilds, dir, 'spawn-helper');
+      if (fs.existsSync(helper)) {
+        fs.chmodSync(helper, 0o755);
+      }
+    }
+  }
 }
 
 const config: ForgeConfig = {
@@ -19,7 +30,7 @@ const config: ForgeConfig = {
       unpack: '**/node_modules/node-pty/**',
     },
     name: 'Termy',
-    icon: './icon',
+    icon: './assets/icon',
     afterCopy: [
       (buildPath, _electronVersion, _platform, _arch, callback) => {
         try {

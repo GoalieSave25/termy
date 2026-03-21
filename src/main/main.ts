@@ -61,7 +61,7 @@ const createWindow = () => {
 app.on('ready', () => {
   if (process.platform === 'darwin') {
     if (!app.isPackaged) {
-      app.dock?.setIcon(path.join(app.getAppPath(), 'logo.png'));
+      app.dock?.setIcon(path.join(app.getAppPath(), 'assets', 'logo.png'));
     }
   }
   createWindow();

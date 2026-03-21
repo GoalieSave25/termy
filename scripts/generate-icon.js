@@ -9,9 +9,9 @@ const fs = require("fs");
 const { execFileSync } = require("child_process");
 
 const ROOT = path.resolve(__dirname, "..");
-const LOGO = path.join(ROOT, "logo.png");
-const ICNS = path.join(ROOT, "icon.icns");
-const ICONSET = path.join(ROOT, "icon.iconset");
+const LOGO = path.join(ROOT, "assets", "logo.png");
+const ICNS = path.join(ROOT, "assets", "icon.icns");
+const ICONSET = path.join(ROOT, "assets", "icon.iconset");
 const BG_COLOR = { r: 0x26, g: 0x26, b: 0x24 };
 
 const SIZES = [

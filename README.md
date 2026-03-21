@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="lockup.png" alt="Termy" width="400">
+  <img src="assets/lockup.png" alt="Termy" width="400">
 </p>
 
 <p align="center">
