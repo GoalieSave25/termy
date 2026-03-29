@@ -14,3 +14,7 @@ Transition between modes uses a pinch gesture (Ctrl+Scroll) or keyboard shortcut
 ## UI Zoom
 
 Cmd+=/-/0 scales the entire application via CSS zoom. Window mode card heights are kept constant (grid constants scale inversely with zoom).
+
+## Building & Installing
+
+Run `./scripts/install.sh` to build, package, sign, and install to `/Applications`. Signing is handled automatically by `osxSign` in `forge.config.ts`.

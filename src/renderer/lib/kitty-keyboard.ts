@@ -50,6 +50,10 @@ function hasCtrlOrMeta(ev: KeyboardEvent): boolean {
 export function encodeKittyKey(event: KeyboardEvent, flags: number): string | null {
   if (!(flags & KITTY_FLAG_DISAMBIGUATE)) return null;
 
+  // On macOS, Cmd (metaKey) combos are reserved for the terminal emulator
+  // (copy, paste, new tab, etc.) — never encode them as Kitty sequences.
+  if (event.metaKey) return null;
+
   const key = event.key;
   const mod = modifierCode(event);
 

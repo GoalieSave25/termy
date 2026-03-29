@@ -287,6 +287,7 @@ export function attachTerminal(sessionId: string, container: HTMLDivElement): Te
       fontFamily: 'Menlo, Monaco, "Courier New", monospace',
       fontSize: currentFontSize,
       lineHeight: 1.2,
+      scrollback: 10_000,
       cursorBlink: true,
       cursorStyle: 'bar',
       allowProposedApi: true,
@@ -530,7 +531,7 @@ export function attachTerminal(sessionId: string, container: HTMLDivElement): Te
             const scrolledLines = viewportAfter - viewportBefore;
             accum -= scrolledLines * cellHeight;
             if (scrolledLines !== lines) {
-              accum = Math.max(accum, 0);
+              accum = 0;
             }
             // Freeze CSS — the old canvas + old CSS are consistent.
             // onRender will sync once the canvas catches up.
@@ -559,10 +560,25 @@ export function attachTerminal(sessionId: string, container: HTMLDivElement): Te
         // Reset transform on programmatic scrolls (new output, scrollToBottom, etc.)
         terminal.onScroll(() => {
           if (Date.now() - lastWheelTime < 150) return;
-          accum = 0;
-          pendingScrollLines = false;
-          screen.style.transform = '';
+          if (accum !== 0 || pendingScrollLines) {
+            accum = 0;
+            pendingScrollLines = false;
+            screen.style.transform = '';
+          }
         });
+
+        // Failsafe: after wheel activity settles, ensure no residual transform remains
+        // when the viewport is at the bottom.
+        (terminal.element as HTMLElement).addEventListener('wheel', () => {
+          setTimeout(() => {
+            const b = terminal.buffer.active;
+            if (b.viewportY >= b.baseY && accum !== 0) {
+              accum = 0;
+              pendingScrollLines = false;
+              screen.style.transform = '';
+            }
+          }, 200);
+        }, { passive: true });
       }
     }
 

@@ -550,6 +550,7 @@ export function CarouselLayout({ tab, isVisible }: CarouselLayoutProps) {
       // Determine axis on first event of a gesture
       if (scrollAxisRef.current === 'none') {
         scrollAxisRef.current = Math.abs(e.deltaX) >= Math.abs(e.deltaY) ? 'horizontal' : 'vertical';
+        momentumLockedRef.current = false;
       }
       // Reset axis lock after scroll inactivity
       if (scrollAxisTimeoutRef.current) clearTimeout(scrollAxisTimeoutRef.current);

@@ -19,6 +19,12 @@ export function useKeyboardShortcuts() {
 
       if (!meta) return;
 
+      // Cmd+Space → no-op (prevent double-space leak into terminal)
+      if (key === ' ' && !shift && !alt && !ctrl) {
+        e.preventDefault();
+        return;
+      }
+
       const store = useLayoutStore.getState();
       const tab = store.getActiveTab();
       if (!tab) return;

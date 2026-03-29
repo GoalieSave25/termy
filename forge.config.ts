@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import type { ForgeConfig } from '@electron-forge/shared-types';
 import { MakerZIP } from '@electron-forge/maker-zip';
 import { VitePlugin } from '@electron-forge/plugin-vite';
@@ -30,7 +31,14 @@ const config: ForgeConfig = {
       unpack: '**/node_modules/node-pty/**',
     },
     name: 'Termy',
+    appBundleId: 'com.tree.termy',
     icon: './assets/icon',
+    osxSign: {
+      identity: process.env.CODESIGN_IDENTITY || '-',
+    },
+    extendInfo: {
+      NSAppleEventsUsageDescription: 'Termy needs access to control other applications via Apple Events.',
+    },
     afterCopy: [
       (buildPath, _electronVersion, _platform, _arch, callback) => {
         try {
