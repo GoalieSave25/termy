@@ -79,8 +79,16 @@ export interface TermyApi {
     save(data: string): Promise<void>;
     load(): Promise<string | null>;
   };
+  settings: {
+    save(data: string): Promise<void>;
+    load(): Promise<string | null>;
+  };
   scroll: {
     onPhase(callback: (phase: string) => void): () => void;
+  };
+  system: {
+    onResume(callback: () => void): () => void;
+    onOpenSettings(callback: () => void): () => void;
   };
   getPathForFile(file: File): string;
 }

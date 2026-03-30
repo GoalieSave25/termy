@@ -19,6 +19,30 @@ html, body, #root {
   -webkit-app-region: no-drag;
 }
 
+/* Tab bar — unified color system */
+.tab-active {
+  color: rgba(255, 255, 255, 0.9);
+  background: #181818;
+  font-size: 0.875rem;
+}
+.tab-inactive {
+  color: rgba(255, 255, 255, 0.35);
+  background: transparent;
+  font-size: 0.875rem;
+}
+.tab-inactive:hover {
+  color: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* Context menu item press animation */
+.ctx-item {
+  transition: background 80ms ease, transform 120ms cubic-bezier(0.32, 1.2, 0.54, 1);
+}
+.ctx-item:active {
+  transform: scale(0.96);
+}
+
 /* Hide scrollbar in tab bar */
 .no-scrollbar::-webkit-scrollbar {
   display: none;
@@ -48,4 +72,118 @@ html, body, #root {
 
 .xterm:hover .xterm-viewport::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.15);
+}
+
+/* Claude completion background pulse */
+@keyframes claude-bg-pulse {
+  0%, 100% { opacity: 0.04; }
+  50% { opacity: 0.1; }
+}
+@keyframes claude-dot-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.7; }
+}
+@keyframes claude-dot-ring {
+  0% { transform: scale(1); opacity: 0.5; }
+  100% { transform: scale(2); opacity: 0; }
+}
+
+/* Fuzzy finder animations */
+@keyframes fuzzy-overlay-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes fuzzy-panel-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* Search bar animation */
+@keyframes search-panel-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* Pagination dot hover/active animations */
+.nav-dot {
+  transition: transform 150ms ease;
+}
+.nav-dot:hover {
+  transform: scale(1.35);
+}
+.nav-dot:active {
+  transform: scale(0.92);
+  transition-duration: 200ms;
+}
+.nav-dot.nav-dot-active:hover {
+  transform: none;
+}
+.nav-dot-circle {
+  background: #4b5563;
+}
+.nav-dot-circle.active {
+  background: #9ca3af;
+}
+.nav-dot:hover .nav-dot-circle:not(.active) {
+  background: #747c89;
+}
+
+/* Settings rows — no border on last item */
+.setting-row:last-child {
+  border-bottom: none !important;
+}
+
+/* Keybinding recording pulse */
+@keyframes keybind-pulse {
+  0%, 100% { border-color: rgba(110,203,99,0.5); }
+  50% { border-color: rgba(110,203,99,0.15); }
+}
+
+/* Settings sidebar button press */
+.settings-sidebar-btn:active {
+  transform: scale(0.95);
+  transition-duration: 80ms;
+}
+
+/* Settings slider */
+.settings-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: rgba(255,255,255,0.12);
+  border-radius: 2px;
+  outline: none;
+}
+.settings-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #6ECB63;
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+}
+.settings-slider::-webkit-slider-thumb:hover {
+  background: #82D578;
+}
+
+/* Hide number input spinners in settings */
+.settings-slider + input[type="number"]::-webkit-inner-spin-button,
+.settings-slider + input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }

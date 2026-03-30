@@ -17,20 +17,20 @@ export function ClaudeStatusWidget({ status }: Props) {
 
   return (
     <>
-      {model && <span className="text-amber-400/70">{model}</span>}
+      {model && <span style={{ color: 'rgba(217, 158, 60, 0.7)' }}>{model}</span>}
       {contextPct != null && (
         <span className="flex items-center gap-1">
-          <span className="text-gray-600">ctx</span>
-          <span className={contextPct > 80 ? 'text-red-400' : contextPct > 50 ? 'text-yellow-400' : 'text-gray-400'}>
+          <span style={{ color: 'rgba(255,255,255,0.2)' }}>ctx</span>
+          <span style={{ color: contextPct > 80 ? 'rgba(248,113,113,0.9)' : contextPct > 50 ? 'rgba(250,204,21,0.8)' : 'rgba(255,255,255,0.5)' }}>
             {Math.round(contextPct)}%
           </span>
         </span>
       )}
       {cost != null && (
-        <span className="text-gray-400">${cost.toFixed(3)}</span>
+        <span style={{ color: 'rgba(255,255,255,0.5)' }}>${cost.toFixed(3)}</span>
       )}
       {duration != null && (
-        <span className="text-gray-500">{formatDuration(duration)}</span>
+        <span style={{ color: 'rgba(255,255,255,0.35)' }}>{formatDuration(duration)}</span>
       )}
     </>
   );

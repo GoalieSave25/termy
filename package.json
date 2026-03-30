@@ -6,6 +6,7 @@
   "main": ".vite/build/main.js",
   "private": true,
   "scripts": {
+    "postinstall": "bash scripts/patch-dev-icon.sh",
     "start": "electron-forge start",
     "generate-icon": "node scripts/generate-icon.js",
     "package": "npm run generate-icon && electron-forge package",

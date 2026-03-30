@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, powerMonitor } from 'electron';
 import path from 'node:path';
 import { PtyManager } from './pty-manager';
 import { NotificationServer } from './notification-server';
@@ -15,6 +15,10 @@ if (started) {
 // Enable Chrome AI Prompt API if available
 app.commandLine.appendSwitch('enable-features', 'AIPromptAPI');
 
+// Prevent Chromium from permanently blocking WebGL after transient GPU crashes.
+// Without this, a single GPU hiccup disables WebGL for the rest of the session.
+app.disableDomainBlockingFor3DAPIs();
+
 const ptyManager = new PtyManager();
 const notificationServer = new NotificationServer();
 ptyManager.setNotificationSocketPath(notificationServer.getSocketPath());
@@ -27,6 +31,7 @@ const createWindow = () => {
     height: 800,
     minWidth: 400,
     minHeight: 300,
+    acceptFirstMouse: true,
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 12, y: 12 },
     backgroundColor: '#111111',
@@ -59,19 +64,24 @@ const createWindow = () => {
 };
 
 app.on('ready', () => {
-  if (process.platform === 'darwin') {
-    if (!app.isPackaged) {
-      app.dock?.setIcon(path.join(app.getAppPath(), 'assets', 'logo.png'));
-    }
-  }
   createWindow();
   notificationServer.start();
 
-  setTimeout(() => {
-    checkForUpdates({ silent: true }).catch(err => {
-      console.error('[auto-update] Check failed:', err);
+  // Notify renderer after sleep/wake so it can rebuild WebGL texture atlases.
+  // GPU textures get corrupted on resume but no webglcontextlost event fires.
+  powerMonitor.on('resume', () => {
+    BrowserWindow.getAllWindows().forEach((w) => {
+      w.webContents.send('system:resume');
     });
-  }, 3000);
+  });
+
+  if (app.isPackaged) {
+    setTimeout(() => {
+      checkForUpdates({ silent: true }).catch(err => {
+        console.error('[auto-update] Check failed:', err);
+      });
+    }, 3000);
+  }
 });
 
 app.on('window-all-closed', () => {

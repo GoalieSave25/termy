@@ -6,10 +6,14 @@ import { useLayoutStore } from './store/layout-store';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useImagePaste } from './hooks/useImagePaste';
 import { useFileDrop } from './hooks/useFileDrop';
-import { useAutoTitles } from './hooks/useAutoTitles';
 import { usePaneSummaries } from './hooks/usePaneSummaries';
+import { useClaudeDetector } from './hooks/useClaudeDetector';
 import { useStatePersistence } from './hooks/useStatePersistence';
+import { FuzzyFinder } from './components/FuzzyFinder/FuzzyFinder';
+import { Settings } from './components/Settings/Settings';
 import { useSessionStore } from './store/session-store';
+import { useSettingsStore } from './store/settings-store';
+import { rebuildWebgl, applyTerminalSettings } from './lib/terminal-registry';
 
 export function App() {
   const tabs = useLayoutStore((s) => s.tabs);
@@ -19,17 +23,60 @@ export function App() {
   useKeyboardShortcuts();
   useImagePaste();
   useFileDrop();
-  useAutoTitles();
   usePaneSummaries();
+  useClaudeDetector();
   useStatePersistence();
+
+  // Init settings before first tab so terminal options are ready
+  useEffect(() => {
+    useSettingsStore.getState().init();
+
+    let prevTerminal = useSettingsStore.getState().terminal;
+    let prevAppearance = useSettingsStore.getState().appearance;
+
+    const unsub = useSettingsStore.subscribe((state) => {
+      // Apply terminal settings when they change
+      if (state.terminal !== prevTerminal) {
+        prevTerminal = state.terminal;
+        applyTerminalSettings();
+      }
+
+      // Apply appearance settings when they change
+      if (state.appearance !== prevAppearance) {
+        prevAppearance = state.appearance;
+        const layoutStore = useLayoutStore.getState();
+        if (state.appearance.uiZoom !== layoutStore.uiZoom) {
+          window.termyApi.zoom.setFactor(state.appearance.uiZoom);
+          useLayoutStore.setState({ uiZoom: state.appearance.uiZoom });
+        }
+        if (state.appearance.visibleCount !== layoutStore.visibleCount) {
+          useLayoutStore.setState({ visibleCount: state.appearance.visibleCount });
+        }
+        document.documentElement.style.opacity = String(state.appearance.windowOpacity);
+      }
+    });
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     initFirstTab();
 
-    const unsub = window.termyApi.pty.onExit((msg) => {
+    const unsubExit = window.termyApi.pty.onExit((msg) => {
       useSessionStore.getState().updateSession(msg.sessionId, { alive: false });
     });
-    return unsub;
+
+    // Rebuild WebGL renderers after sleep/wake — GPU textures get corrupted
+    // on resume but no webglcontextlost event fires.
+    const unsubResume = window.termyApi.system.onResume(() => {
+      console.log('[app] System resume detected, rebuilding WebGL renderers');
+      rebuildWebgl();
+    });
+
+    const unsubSettings = window.termyApi.system.onOpenSettings(() => {
+      useLayoutStore.getState().setSettingsOpen(true);
+    });
+
+    return () => { unsubExit(); unsubResume(); unsubSettings(); };
   }, []);
 
   return (
@@ -50,6 +97,8 @@ export function App() {
         })}
       </div>
       <StatusBar />
+      <FuzzyFinder />
+      <Settings />
     </div>
   );
 }

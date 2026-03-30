@@ -81,11 +81,31 @@ const api: TermyApi = {
       return ipcRenderer.invoke(IpcInvoke.STATE_LOAD);
     },
   },
+  settings: {
+    save(data: string): Promise<void> {
+      return ipcRenderer.invoke(IpcInvoke.SETTINGS_SAVE, data);
+    },
+    load(): Promise<string | null> {
+      return ipcRenderer.invoke(IpcInvoke.SETTINGS_LOAD);
+    },
+  },
   scroll: {
     onPhase(callback: (phase: string) => void): () => void {
       const handler = (_event: Electron.IpcRendererEvent, phase: string) => callback(phase);
       ipcRenderer.on(IpcOn.SCROLL_PHASE, handler);
       return () => ipcRenderer.removeListener(IpcOn.SCROLL_PHASE, handler);
+    },
+  },
+  system: {
+    onResume(callback: () => void): () => void {
+      const handler = () => callback();
+      ipcRenderer.on('system:resume', handler);
+      return () => ipcRenderer.removeListener('system:resume', handler);
+    },
+    onOpenSettings(callback: () => void): () => void {
+      const handler = () => callback();
+      ipcRenderer.on(IpcOn.OPEN_SETTINGS, handler);
+      return () => ipcRenderer.removeListener(IpcOn.OPEN_SETTINGS, handler);
     },
   },
   getPathForFile(file: File): string {

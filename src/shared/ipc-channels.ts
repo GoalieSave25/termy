@@ -11,6 +11,8 @@ export const IpcInvoke = {
   SHOW_NOTIFICATION: 'notification:show',
   STATE_SAVE: 'state:save',
   STATE_LOAD: 'state:load',
+  SETTINGS_SAVE: 'settings:save',
+  SETTINGS_LOAD: 'settings:load',
 } as const;
 
 /** Renderer -> Main (send, fire-and-forget) */
@@ -24,4 +26,5 @@ export const IpcOn = {
   PTY_EXIT: 'pty:exit',
   CLAUDE_NOTIFICATION: 'claude:notification',
   SCROLL_PHASE: 'scroll:phase',
+  OPEN_SETTINGS: 'menu:open-settings',
 } as const;

@@ -61,6 +61,9 @@ export function CarouselTerminalCard({
     } else if (interactionDisabled && terminalRef.current) {
       terminalRef.current?.blur();
     }
+    if (focused && session?.claudeCompleted) {
+      updateSession(item.sessionId, { claudeCompleted: false });
+    }
   }, [isFocused, isVisible, interactionDisabled]);
 
   const handleMouseDown = () => {
@@ -74,6 +77,25 @@ export function CarouselTerminalCard({
       setTimeout(() => entry.terminal.focus(), 0);
     }
   };
+
+  // Close search when this terminal loses focus (switched to another terminal)
+  // or when the terminal itself gains focus (user clicked into it)
+  useEffect(() => {
+    if (!isFocused && isSearchOpen) {
+      setSearchOpen(null);
+    }
+  }, [isFocused]);
+
+  useEffect(() => {
+    if (!isSearchOpen) return;
+    const el = containerRef.current;
+    if (!el) return;
+    const handleFocusIn = () => {
+      setSearchOpen(null);
+    };
+    el.addEventListener('focusin', handleFocusIn);
+    return () => el.removeEventListener('focusin', handleFocusIn);
+  }, [isSearchOpen]);
 
   // --- File drag-and-drop ---
   const [isDropTarget, setIsDropTarget] = useState(false);
@@ -124,14 +146,14 @@ export function CarouselTerminalCard({
   // The card is rendered at full resolution then scaled down by cardScale,
   // so we inflate dimensions by 1/cardScale to hit the target visual size.
   const sc = Math.max(cardScale, 0.1);
-  const headerHeight = 24 + (30 / sc - 24) * overviewProgress;
-  const headerFontSize = 11 + (13 / sc - 11) * overviewProgress;
+  const headerHeight = 30 + (30 / sc - 30) * overviewProgress;
+  const headerFontSize = 12 + (13 / sc - 12) * overviewProgress;
   const headerPx = 8 + (10 / sc - 8) * overviewProgress;
 
   return (
     <div
       className="relative flex flex-col h-full transition-colors duration-300"
-      style={{ backgroundColor: isFocused ? '#111111' : '#111111' }}
+      style={{ backgroundColor: isFocused ? '#111111' : '#111111', overflow: 'visible' }}
       onMouseDown={handleMouseDown}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
@@ -139,45 +161,100 @@ export function CarouselTerminalCard({
       onDrop={handleDrop}
     >
       {/* Border — fades out during transition */}
-      <div className={`absolute inset-0 pointer-events-none border z-10 rounded transition-all duration-300
-        ${interactionDisabled ? 'opacity-0' : 'opacity-100'}
-        ${isFocused ? 'border-gray-600/25' : 'border-gray-600/10'}`} />
+      <div
+        className={`absolute inset-0 pointer-events-none z-10 transition-all duration-300 ${interactionDisabled ? 'rounded' : 'rounded-none'}`}
+        style={{
+          borderLeft: `1px solid ${interactionDisabled ? 'transparent' : '#181818'}`,
+          borderRight: `1px solid ${interactionDisabled ? 'transparent' : '#181818'}`,
+        }}
+      />
+      {/* Claude completion background pulse */}
+      {session?.claudeCompleted && (
+        <div
+          className={`absolute inset-0 pointer-events-none z-10 ${interactionDisabled ? 'rounded' : 'rounded-none'}`}
+          style={{
+            background: '#2DA1FD',
+            animation: 'claude-bg-pulse 2s ease-in-out infinite',
+          }}
+        />
+      )}
       {/* Header — always visible, bg and close button fade during transition */}
       <div
-        className={`
-          flex items-center select-none shrink-0
-          font-medium
-          border-b border-white/5 rounded-t
-        `}
+        className={`flex items-center select-none shrink-0 font-medium ${interactionDisabled ? 'rounded-t' : 'rounded-none'}`}
         style={{
           height: headerHeight,
           fontSize: headerFontSize,
           paddingLeft: headerPx,
           paddingRight: headerPx,
-          backgroundColor: interactionDisabled ? 'transparent' : isFocused ? '#151515' : '#111111',
-          color: `rgba(255, 255, 255, ${isFocused && !interactionDisabled
-            ? 0.6 + 0.4 * overviewProgress
-            : 0.4 + 0.6 * overviewProgress})`,
-          transition: 'background-color 300ms, color 300ms',
+          background: `linear-gradient(to bottom, rgba(24,24,24,${1 - overviewProgress}), transparent)`,
+          boxShadow: `0 1px 0 rgba(255,255,255,${0.03 * (1 - overviewProgress)})`,
+          color: `rgba(255, 255, 255, ${isFocused && !interactionDisabled ? 0.6 : 0.35})`,
+          transition: 'background 300ms, color 300ms',
         }}
+        onDoubleClick={!interactionDisabled ? () => {
+          useLayoutStore.getState().toggleMaximized();
+        } : undefined}
       >
         <div className="flex-1 truncate">
-          <span style={{ opacity: 0.7 + 0.3 * overviewProgress }}>{displayText}</span>
+          <span>{displayText}</span>
         </div>
         <button
-          className={`w-5 h-5 flex items-center justify-center rounded-full
-            text-gray-600 hover:text-white hover:bg-red-500/80
-            active:scale-90 active:bg-red-600 active:text-white
-            transition-all duration-300 ease-out cursor-pointer select-none
+          className={`w-[40px] h-full flex items-center justify-center
+            transition-colors duration-150 cursor-pointer select-none
             ${interactionDisabled ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+          style={{ color: 'rgba(255,255,255,0.35)' }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = 'rgba(255,255,255,0.9)'; e.currentTarget.style.background = '#181818'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(255,255,255,0.35)'; e.currentTarget.style.background = 'transparent'; }}
+          title="Maximize (⌘⇧F)"
+          onClick={(e) => {
+            e.stopPropagation();
+            useLayoutStore.getState().toggleMaximized();
+          }}
+          onMouseDown={(e) => {
+            e.stopPropagation();
+            const el = e.currentTarget;
+            el.style.transition = 'scale 250ms ease, color 150ms, background-color 150ms';
+            el.style.scale = '0.92';
+            const handleUp = () => {
+              el.style.transition = 'scale 400ms cubic-bezier(0.2, 0, 0, 1), color 150ms, background-color 150ms';
+              el.style.scale = '1';
+              setTimeout(() => { el.style.transition = ''; el.style.scale = ''; }, 400);
+              window.removeEventListener('mouseup', handleUp);
+            };
+            window.addEventListener('mouseup', handleUp);
+          }}
+        >
+          <svg width="10" height="10" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M1 3V1h2M5 1h2v2M7 5v2H5M3 7H1V5" />
+          </svg>
+        </button>
+        <button
+          className={`w-[30px] h-full flex items-center justify-center
+            transition-colors duration-150 cursor-pointer select-none
+            ${interactionDisabled ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}
+          style={{ color: 'rgba(255,255,255,0.35)' }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = '#fff'; e.currentTarget.style.background = 'rgba(239,68,68,0.8)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = 'rgba(255,255,255,0.35)'; e.currentTarget.style.background = 'transparent'; }}
           title="Close (⌘W)"
           onClick={(e) => {
             e.stopPropagation();
             onClose();
           }}
-          onMouseDown={(e) => e.stopPropagation()}
+          onMouseDown={(e) => {
+            e.stopPropagation();
+            const el = e.currentTarget;
+            el.style.transition = 'scale 250ms ease, color 150ms, background-color 150ms';
+            el.style.scale = '0.92';
+            const handleUp = () => {
+              el.style.transition = 'scale 400ms cubic-bezier(0.2, 0, 0, 1), color 150ms, background-color 150ms';
+              el.style.scale = '1';
+              setTimeout(() => { el.style.transition = ''; el.style.scale = ''; }, 400);
+              window.removeEventListener('mouseup', handleUp);
+            };
+            window.addEventListener('mouseup', handleUp);
+          }}
         >
-          <svg width="7" height="7" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+          <svg width="9" height="9" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
             <line x1="1" y1="1" x2="7" y2="7" /><line x1="7" y1="1" x2="1" y2="7" />
           </svg>
         </button>
@@ -192,7 +269,7 @@ export function CarouselTerminalCard({
       {/* Terminal */}
       <div
         ref={containerRef}
-        className={`flex-1 min-h-0 caret-transparent ${interactionDisabled ? 'pointer-events-none' : ''}`}
+        className={`relative flex-1 min-h-0 caret-transparent ${interactionDisabled ? 'pointer-events-none' : ''}`}
       />
       {/* Interaction blocker for window mode */}
       {interactionDisabled && (
@@ -212,7 +289,7 @@ export function CarouselTerminalCard({
   );
 }
 
-function formatCwd(cwd: string): string {
+export function formatCwd(cwd: string): string {
   if (!cwd || cwd === '~') return '~';
   const homeMatch = cwd.match(/^\/Users\/[^/]+/);
   if (homeMatch) {

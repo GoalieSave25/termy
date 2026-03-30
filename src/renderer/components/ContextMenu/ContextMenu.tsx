@@ -52,17 +52,29 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   return createPortal(
     <div
       ref={menuRef}
-      style={style}
-      className="min-w-[180px] py-1 bg-[#2a2a2a] border border-white/10 rounded-lg shadow-xl text-xs"
+      style={{
+        ...style,
+        padding: 4,
+        background: 'rgba(26, 26, 26, 0.3)',
+        backdropFilter: 'blur(20px)',
+        WebkitBackdropFilter: 'blur(20px)',
+        border: '1px solid rgba(255, 255, 255, 0.08)',
+        borderRadius: 10,
+        boxShadow: '0 0 0 1px rgba(0,0,0,0.3), 0 16px 70px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3)',
+      }}
+      className="min-w-[180px] text-[13px] flex flex-col"
     >
       {items.map((item, i) => {
         if (item.separator) {
-          return <div key={i} className="my-1 border-t border-white/10" />;
+          return <div key={i} style={{ margin: '3px 4px', borderTop: '1px solid rgba(255,255,255,0.06)' }} />;
         }
         return (
           <button
             key={i}
-            className="w-full flex items-center justify-between px-3 py-1.5 text-gray-200 hover:bg-white/10 cursor-default text-left"
+            className="ctx-item flex items-center justify-between cursor-default text-left"
+            style={{ color: 'rgba(255,255,255,0.9)', padding: '6px 10px', borderRadius: 6 }}
+            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
+            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
             onClick={() => {
               item.action();
               onClose();
@@ -70,7 +82,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
           >
             <span>{item.label}</span>
             {item.shortcut && (
-              <span className="ml-4 text-gray-500">{item.shortcut}</span>
+              <span className="ml-4" style={{ color: 'rgba(255,255,255,0.35)' }}>{item.shortcut}</span>
             )}
           </button>
         );

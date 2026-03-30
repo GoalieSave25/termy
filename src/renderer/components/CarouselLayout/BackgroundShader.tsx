@@ -38,17 +38,17 @@ vec3 grad4(float y) {
 void main() {
   vec2 uv = gl_FragCoord.xy / r;
   float ax = uv.x * r.x / r.y;
-  float s = t * 0.4;
+  float s = t * 0.7;
 
   float sy3 = sin(uv.y * 3.0 + s * 0.7);
   float cy2 = cos(ax * 2.5 + s * 0.6);
 
   vec2 w = uv;
-  w.x += sy3 * 0.12 + sin(uv.y * 5.5 + s * 1.1 + uv.x * 2.0) * 0.06;
-  w.y += cy2 * 0.10 + cos(ax * 4.0 + s * 0.9 + uv.y * 3.0) * 0.05;
+  w.x += sy3 * 0.22 + sin(uv.y * 5.5 + s * 1.1 + uv.x * 2.0) * 0.12;
+  w.y += cy2 * 0.18 + cos(ax * 4.0 + s * 0.9 + uv.y * 3.0) * 0.10;
 
-  vec2 d1 = vec2(cos(s * 0.3), sin(s * 0.25)) * 1.5;
-  vec2 d2 = vec2(sin(s * 0.2 + 2.0), cos(s * 0.35)) * 1.2;
+  vec2 d1 = vec2(cos(s * 0.3), sin(s * 0.25)) * 3.0;
+  vec2 d2 = vec2(sin(s * 0.2 + 2.0), cos(s * 0.35)) * 2.5;
 
   float wx = w.x * r.x / r.y;
   float n1 = sn(vec2(wx, w.y) * 2.0 + d1);
@@ -93,14 +93,14 @@ void main() {
   gl_FragColor = vec4(col, 1.0);
 }`;
 
-// Ocean theme colors
+// Neutral gray theme colors (dark)
 const OCEAN_COLORS: [number, number, number][] = [
-  [0.03, 0.06, 0.16],  // abyss
-  [0.06, 0.16, 0.30],  // deep sea
-  [0.12, 0.34, 0.46],  // teal
-  [0.42, 0.65, 0.68],  // seafoam
-  [0.08, 0.22, 0.38],  // navy accent
-  [0.18, 0.42, 0.52],  // cerulean accent
+  [0.02, 0.02, 0.03],  // near-black
+  [0.05, 0.05, 0.06],  // very dark gray
+  [0.12, 0.12, 0.13],  // dark mid
+  [0.22, 0.22, 0.24],  // mid gray
+  [0.07, 0.07, 0.08],  // accent dark
+  [0.16, 0.16, 0.18],  // accent mid
 ];
 
 function compileShader(gl: WebGLRenderingContext, type: number, src: string): WebGLShader | null {

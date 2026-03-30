@@ -5,6 +5,7 @@ import { PtyManager } from './pty-manager';
 import { readClipboardImage } from './clipboard';
 import { detectShell } from './shell-detector';
 import { saveState, loadState } from './state-persistence';
+import { saveSettings, loadSettings } from './settings-persistence';
 
 export function registerIpcHandlers(ptyManager: PtyManager) {
   ipcMain.handle(IpcInvoke.PTY_CREATE, (_event, req: PtyCreateRequest) => {
@@ -58,6 +59,14 @@ export function registerIpcHandlers(ptyManager: PtyManager) {
 
   ipcMain.handle(IpcInvoke.STATE_LOAD, () => {
     return loadState();
+  });
+
+  ipcMain.handle(IpcInvoke.SETTINGS_SAVE, (_event, data: string) => {
+    return saveSettings(data);
+  });
+
+  ipcMain.handle(IpcInvoke.SETTINGS_LOAD, () => {
+    return loadSettings();
   });
 
   ipcMain.on(IpcSend.PTY_INPUT, (_event, sessionId: string, data: string) => {

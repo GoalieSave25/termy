@@ -1,4 +1,5 @@
-import { app, Menu, type MenuItemConstructorOptions } from 'electron';
+import { app, BrowserWindow, Menu, type MenuItemConstructorOptions } from 'electron';
+import { IpcOn } from '../shared/ipc-channels';
 import { checkForUpdates } from './auto-updater';
 
 export function buildMenu(): void {
@@ -8,6 +9,14 @@ export function buildMenu(): void {
       submenu: [
         { role: 'about' },
         { type: 'separator' },
+        {
+          label: 'Settings...',
+          accelerator: 'CmdOrCtrl+,',
+          click: () => {
+            const win = BrowserWindow.getFocusedWindow();
+            if (win) win.webContents.send(IpcOn.OPEN_SETTINGS);
+          },
+        },
         {
           label: 'Check for Updates...',
           click: () => { checkForUpdates({ silent: false }); },

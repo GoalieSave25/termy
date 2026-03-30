@@ -1,200 +1,170 @@
 import { useEffect } from 'react';
 import { useLayoutStore } from '../store/layout-store';
+import { useSettingsStore } from '../store/settings-store';
 import { getTerminalEntry, jumpToPrompt } from '../lib/terminal-registry';
 import { animatedRemoveTerminal } from '../lib/carousel-actions';
+import { eventMatchesCombo } from '../lib/default-keybindings';
+import type { KeybindingAction } from '../types/settings';
 
 // Set when window mode is entered via Cmd+I/K hold; CarouselLayout reads this
 // to know it should exit on Meta release.
 export let _zoomEnteredViaHold = false;
 export function clearZoomHold() { _zoomEnteredViaHold = false; }
 
+function findAction(e: KeyboardEvent, keybindings: Record<KeybindingAction, import('../types/settings').KeyCombo>): KeybindingAction | null {
+  for (const [action, combo] of Object.entries(keybindings) as [KeybindingAction, import('../types/settings').KeyCombo][]) {
+    if (eventMatchesCombo(e, combo)) return action;
+  }
+  return null;
+}
+
 export function useKeyboardShortcuts() {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       const meta = e.metaKey;
-      const shift = e.shiftKey;
-      const alt = e.altKey;
-      const ctrl = e.ctrlKey;
       const key = e.key.toLowerCase();
 
-      if (!meta) return;
-
       // Cmd+Space → no-op (prevent double-space leak into terminal)
-      if (key === ' ' && !shift && !alt && !ctrl) {
+      if (meta && key === ' ' && !e.shiftKey && !e.altKey && !e.ctrlKey) {
         e.preventDefault();
         return;
       }
+
+      if (!meta && !e.ctrlKey) return;
 
       const store = useLayoutStore.getState();
       const tab = store.getActiveTab();
       if (!tab) return;
 
-      // Cmd+D → add terminal
-      if (key === 'd' && !shift && !alt && !ctrl) {
-        e.preventDefault();
-        store.carouselAddTerminal();
+      const keybindings = useSettingsStore.getState().keybindings;
+      const action = findAction(e, keybindings);
+      if (!action) return;
+
+      e.preventDefault();
+
+      // Special guard: enterWindowMode only from tab mode, skip if overlays open
+      if ((action === 'enterWindowModeI' || action === 'enterWindowModeK') &&
+          (store.carouselZoomedOut || store.fuzzyFinderOpen || store.settingsOpen)) {
         return;
       }
 
-      // Cmd+W → close terminal
-      if (key === 'w' && !shift && !alt && !ctrl) {
-        e.preventDefault();
-        animatedRemoveTerminal(tab.carouselFocusedItemId);
-        return;
-      }
+      // Execute the action
+      switch (action) {
+        case 'addTerminal':
+          store.carouselAddTerminal();
+          break;
 
-      // Cmd+Shift+W → close tab
-      if (key === 'w' && shift && !alt && !ctrl) {
-        e.preventDefault();
-        store.closeTab(tab.id);
-        return;
-      }
+        case 'closeTerminal':
+          animatedRemoveTerminal(tab.carouselFocusedItemId);
+          break;
 
-      // Cmd+T → new terminal in current tab
-      if (key === 't' && !shift && !alt && !ctrl) {
-        e.preventDefault();
-        store.carouselAddTerminal();
-        return;
-      }
+        case 'closeTab':
+          store.closeTab(tab.id);
+          break;
 
-      // Cmd+Shift+Enter or Cmd+P → toggle overview
-      if ((key === 'enter' && shift && !alt && !ctrl) ||
-          (key === 'p' && !shift && !alt && !ctrl)) {
-        e.preventDefault();
-        store.toggleZoom();
-        return;
-      }
-
-      // Cmd+Shift+K → clear terminal
-      if (key === 'k' && shift && !alt && !ctrl) {
-        e.preventDefault();
-        const focusedItem = tab.carouselItems.find((c) => c.id === tab.carouselFocusedItemId);
-        if (focusedItem) {
-          const entry = getTerminalEntry(focusedItem.sessionId);
-          if (entry) entry.terminal.clear();
+        case 'toggleSearch': {
+          const paneId = tab.carouselFocusedItemId;
+          store.setSearchOpen(store.searchOpenPaneId === paneId ? null : paneId);
+          break;
         }
-        return;
-      }
 
-      // Cmd+Up → jump to previous prompt
-      if (key === 'arrowup' && !shift && !alt && !ctrl) {
-        e.preventDefault();
-        const focusedItem = tab.carouselItems.find((c) => c.id === tab.carouselFocusedItemId);
-        if (focusedItem) jumpToPrompt(focusedItem.sessionId, 'prev');
-        return;
-      }
-
-      // Cmd+Down → jump to next prompt
-      if (key === 'arrowdown' && !shift && !alt && !ctrl) {
-        e.preventDefault();
-        const focusedItem = tab.carouselItems.find((c) => c.id === tab.carouselFocusedItemId);
-        if (focusedItem) jumpToPrompt(focusedItem.sessionId, 'next');
-        return;
-      }
-
-      // Cmd+F → search
-      if (key === 'f' && !shift && !alt && !ctrl) {
-        e.preventDefault();
-        const paneId = tab.carouselFocusedItemId;
-        if (store.searchOpenPaneId === paneId) {
-          store.setSearchOpen(null);
-        } else {
-          store.setSearchOpen(paneId);
+        case 'clearTerminal': {
+          const focusedItem = tab.carouselItems.find((c) => c.id === tab.carouselFocusedItemId);
+          if (focusedItem) {
+            const entry = getTerminalEntry(focusedItem.sessionId);
+            if (entry) entry.terminal.clear();
+          }
+          break;
         }
-        return;
-      }
 
-      // Cmd+= → zoom in
-      if (key === '=' && !shift && !alt && !ctrl) {
-        e.preventDefault();
-        store.changeUiZoom(0.1);
-        return;
-      }
+        case 'toggleWindowMode':
+          store.toggleZoom();
+          break;
 
-      // Cmd+- → zoom out
-      if (key === '-' && !shift && !alt && !ctrl) {
-        e.preventDefault();
-        store.changeUiZoom(-0.1);
-        return;
-      }
+        case 'enterWindowModeI':
+        case 'enterWindowModeK':
+          store.toggleZoom();
+          _zoomEnteredViaHold = true;
+          break;
 
-      // Cmd+0 → reset zoom
-      if (key === '0' && !shift && !alt && !ctrl) {
-        e.preventDefault();
-        store.resetUiZoom();
-        return;
-      }
+        case 'fuzzyFinder':
+          store.setFuzzyFinderOpen(!store.fuzzyFinderOpen);
+          break;
 
-      // Cmd+I/K → enter window mode (only from tab mode; in window mode, CarouselLayout handles grid nav)
-      if ((key === 'i' || key === 'k') && !shift && !alt && !ctrl && !store.carouselZoomedOut) {
-        e.preventDefault();
-        store.toggleZoom();
-        _zoomEnteredViaHold = true;
-        return;
-      }
+        case 'openSettings':
+          store.setSettingsOpen(!store.settingsOpen);
+          break;
 
-      // Cmd+J/L → navigate left/right
-      if (!shift && !alt && !ctrl) {
-        const dirMap: Record<string, 'left' | 'right'> = { j: 'left', l: 'right' };
-        const dir = dirMap[key];
-        if (dir) {
-          e.preventDefault();
-          store.focusDirection(dir);
-          return;
+        case 'focusLeft':
+        case 'altFocusLeft':
+          store.focusDirection('left');
+          break;
+
+        case 'focusRight':
+        case 'altFocusRight':
+          store.focusDirection('right');
+          break;
+
+        case 'focusNext':
+          store.focusNext();
+          break;
+
+        case 'focusPrevious':
+          store.focusPrevious();
+          break;
+
+        case 'nextTab':
+        case 'altNextTab': {
+          const idx = store.tabs.findIndex((t) => t.id === store.activeTabId);
+          const next = store.tabs[(idx + 1) % store.tabs.length];
+          if (next) store.setActiveTab(next.id);
+          break;
         }
-      }
 
-      // Cmd+Alt+Arrow → navigate
-      if (alt && !shift && !ctrl) {
-        const dirMap: Record<string, 'left' | 'right'> = {
-          arrowleft: 'left',
-          arrowright: 'right',
-        };
-        const dir = dirMap[key];
-        if (dir) {
-          e.preventDefault();
-          store.focusDirection(dir);
-          return;
+        case 'prevTab':
+        case 'altPrevTab': {
+          const idx = store.tabs.findIndex((t) => t.id === store.activeTabId);
+          const prev = store.tabs[(idx - 1 + store.tabs.length) % store.tabs.length];
+          if (prev) store.setActiveTab(prev.id);
+          break;
         }
-      }
 
-      // Cmd+] → focus next, Cmd+[ → focus previous
-      if (key === ']' && !shift && !alt && !ctrl) {
-        e.preventDefault();
-        store.focusNext();
-        return;
-      }
-      if (key === '[' && !shift && !alt && !ctrl) {
-        e.preventDefault();
-        store.focusPrevious();
-        return;
-      }
+        case 'jumpToTab1': case 'jumpToTab2': case 'jumpToTab3':
+        case 'jumpToTab4': case 'jumpToTab5': case 'jumpToTab6':
+        case 'jumpToTab7': case 'jumpToTab8': case 'jumpToTab9': {
+          const num = parseInt(action.replace('jumpToTab', ''));
+          const targetTab = store.tabs[num - 1];
+          if (targetTab) store.setActiveTab(targetTab.id);
+          break;
+        }
 
-      // Cmd+Shift+] / Cmd+O → next tab, Cmd+Shift+[ / Cmd+U → previous tab
-      if ((key === ']' && shift && !alt && !ctrl) ||
-          (key === 'o' && !shift && !alt && !ctrl)) {
-        e.preventDefault();
-        const idx = store.tabs.findIndex((t) => t.id === store.activeTabId);
-        const next = store.tabs[(idx + 1) % store.tabs.length];
-        if (next) store.setActiveTab(next.id);
-        return;
-      }
-      if ((key === '[' && shift && !alt && !ctrl) ||
-          (key === 'u' && !shift && !alt && !ctrl)) {
-        e.preventDefault();
-        const idx = store.tabs.findIndex((t) => t.id === store.activeTabId);
-        const prev = store.tabs[(idx - 1 + store.tabs.length) % store.tabs.length];
-        if (prev) store.setActiveTab(prev.id);
-        return;
-      }
+        case 'zoomIn':
+          store.changeUiZoom(0.1);
+          break;
 
-      // Cmd+1-9 → jump to tab
-      const tabNum = parseInt(key);
-      if (tabNum >= 1 && tabNum <= 9 && !shift && !alt && !ctrl) {
-        e.preventDefault();
-        const targetTab = store.tabs[tabNum - 1];
-        if (targetTab) store.setActiveTab(targetTab.id);
-        return;
+        case 'zoomOut':
+          store.changeUiZoom(-0.1);
+          break;
+
+        case 'zoomReset':
+          store.resetUiZoom();
+          break;
+
+        case 'promptUp': {
+          const fi = tab.carouselItems.find((c) => c.id === tab.carouselFocusedItemId);
+          if (fi) jumpToPrompt(fi.sessionId, 'prev');
+          break;
+        }
+
+        case 'promptDown': {
+          const fi = tab.carouselItems.find((c) => c.id === tab.carouselFocusedItemId);
+          if (fi) jumpToPrompt(fi.sessionId, 'next');
+          break;
+        }
+
+        case 'toggleMaximize':
+          store.toggleMaximized();
+          break;
       }
     };
 

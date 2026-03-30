@@ -12,6 +12,7 @@ function getStatePath(): string {
 export async function saveState(data: string): Promise<void> {
   try {
     const filePath = getStatePath();
+    await fsp.mkdir(path.dirname(filePath), { recursive: true });
     // Atomic write: write to temp file, then rename
     const tmpPath = filePath + '.tmp';
     await fsp.writeFile(tmpPath, data, 'utf-8');

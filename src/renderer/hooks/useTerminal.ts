@@ -2,6 +2,30 @@ import { useEffect, useRef } from 'react';
 import { attachTerminal, activateTerminal, fitTerminal, resizePty, onCwdChange } from '../lib/terminal-registry';
 import { USE_GHOSTTY } from '../lib/terminal-backend';
 
+/**
+ * Composite all xterm canvas layers into a frozen snapshot overlay.
+ * Must be called synchronously before fit() so WebGL's backbuffer is still intact.
+ * Returns a canvas element styled to cover the container, or null if unavailable.
+ */
+function snapshotTerminalCanvas(container: HTMLElement): HTMLCanvasElement | null {
+  const canvases = Array.from(container.querySelectorAll<HTMLCanvasElement>('canvas'));
+  if (canvases.length === 0) return null;
+  const first = canvases[0];
+  const w = first.width;
+  const h = first.height;
+  if (w === 0 || h === 0) return null;
+  const snap = document.createElement('canvas');
+  snap.width = w;
+  snap.height = h;
+  const ctx = snap.getContext('2d');
+  if (!ctx) return null;
+  for (const c of canvases) {
+    try { ctx.drawImage(c, 0, 0); } catch { /* skip tainted layers */ }
+  }
+  snap.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:100;';
+  return snap;
+}
+
 interface UseTerminalOptions {
   sessionId: string;
   isVisible?: boolean;
@@ -70,11 +94,15 @@ export function useTerminal(containerRef: React.RefObject<HTMLDivElement | null>
         clearTimeout(fallbackTimer);
         // Re-check suppression after debounce delay
         if (resizeSuppressedRef.current) return;
+        let snapshot: HTMLCanvasElement | null = null;
         try {
-          // Hide terminal during reflow to mask any garbled content from
-          // ghostty's buffer reflow before the shell's SIGWINCH redraw arrives.
-          const wasReady = entry.ready;
-          if (wasReady) container.style.visibility = 'hidden';
+          // Snapshot the current canvas contents before fit() clears the WebGL
+          // backbuffer. This keeps the old frame visible as an overlay while the
+          // shell processes SIGWINCH and redraws, eliminating the blank flash.
+          if (entry.ready) {
+            snapshot = snapshotTerminalCanvas(container);
+            if (snapshot) container.appendChild(snapshot);
+          }
 
           entry.fitAddon.fit();
           let { cols, rows } = entry.terminal;
@@ -95,7 +123,7 @@ export function useTerminal(containerRef: React.RefObject<HTMLDivElement | null>
           // Skip if dimensions haven't changed since last PTY resize
           const last = lastSentRef.current;
           if (last && last.cols === cols && last.rows === rows) {
-            if (wasReady) container.style.visibility = '';
+            snapshot?.remove();
             return;
           }
           lastSentRef.current = { cols, rows };
@@ -105,12 +133,26 @@ export function useTerminal(containerRef: React.RefObject<HTMLDivElement | null>
           // New terminals: start receiving live output now
           activateTerminal(options.sessionId);
 
-          // Unhide after the shell has time to process SIGWINCH and redraw
-          if (wasReady) {
-            setTimeout(() => { container.style.visibility = ''; }, 50);
+          // Remove overlay once the shell's SIGWINCH redraw has been parsed and
+          // rendered. onWriteParsed fires after xterm processes the new data;
+          // one rAF after that ensures the canvas is actually painted.
+          if (snapshot) {
+            const snap = snapshot;
+            let removed = false;
+            const remove = () => {
+              if (removed) return;
+              removed = true;
+              requestAnimationFrame(() => snap.remove());
+            };
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const term = entry.terminal as any;
+            if (typeof term.onWriteParsed === 'function') {
+              const unsub = term.onWriteParsed(() => { unsub.dispose(); remove(); });
+            }
+            setTimeout(remove, 300); // fallback if onWriteParsed doesn't fire
           }
         } catch {
-          container.style.visibility = '';
+          snapshot?.remove();
         }
       }, 150);
     });

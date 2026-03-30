@@ -2,13 +2,13 @@
 
 ## Claude Code Completion Indicators
 
-- [ ] **Blue pulsing icon on completed Claude terminals** — When Claude Code finishes in a terminal (transitions from active/idle to process exit or Claude session ends), show a pulsing blue dot/icon on that terminal's header/card. Should be visible in both tab mode and window mode.
+- [x] **Blue pulsing icon on completed Claude terminals** — When Claude Code finishes in a terminal (transitions from active/idle to process exit or Claude session ends), show a pulsing blue dot/icon on that terminal's header/card. Should be visible in both tab mode and window mode.
 
 - [ ] **Off-screen completion arrows** — When a terminal with a Claude completion indicator is off-screen (scrolled out of view in tab mode), show a left or right arrow at the edge of the viewport with a blue dot. Clicking the arrow navigates to that terminal. If multiple completed terminals are off-screen in the same direction, show a count or stack the dots.
 
 ## Terminal Focus
 
-- [ ] **Click-through focus** — When clicking the app from another application, the first click should pass through and focus the specific terminal clicked on, not just activate the window. No second click needed.
+- [x] **Click-through focus** — When clicking the app from another application, the first click should pass through and focus the specific terminal clicked on, not just activate the window. No second click needed.
 
 ## Terminal Navigation
 
@@ -16,11 +16,13 @@
 
 ## Terminal Preview
 
-- [ ] **Show end of terminal output in previews** — In both the carousel dot hover menu and window mode, terminal thumbnails/previews should be scrolled to the bottom to show the most recent output, not the middle or top of the buffer.
+- [x] **Show end of terminal output in previews** — In both the carousel dot hover menu and window mode, terminal thumbnails/previews should be scrolled to the bottom to show the most recent output, not the middle or top of the buffer.
 
 ## Terminal Navigation (cont.)
 
-- [ ] **Fuzzy finder (Cmd+P)** — Popup that searches across terminal titles, cwd, and recent buffer content. Selecting a result navigates to that terminal and switches tabs if needed.
+- [x] **Fuzzy finder (Cmd+P)** — Popup that searches across terminal titles, cwd, and recent buffer content. Selecting a result navigates to that terminal and switches tabs if needed.
+
+- [x] **Drag terminals to reorder** — Drag terminal cards in window mode to reorder them. New order persists in tab mode.
 
 - [ ] **Drag terminals between tabs** — Grab a terminal card and drop it onto a different tab in the tab bar to move it there.
 
@@ -28,7 +30,7 @@
 
 ## Layout
 
-- [ ] **Maximize single terminal** — Shortcut or double-click terminal header to blow it up to the full window, hiding the carousel. Same shortcut or Escape to return to the previous layout.
+- [x] **Maximize single terminal** — Shortcut or double-click terminal header to blow it up to the full window, hiding the carousel. Same shortcut or Escape to return to the previous layout.
 
 ## Vertical Splits
 

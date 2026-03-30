@@ -1,14 +1,16 @@
 import { Terminal as XtermTerminal } from '@xterm/xterm';
 import { FitAddon as XtermFitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
+import type { ISearchOptions } from '@xterm/addon-search';
 import { SerializeAddon } from '@xterm/addon-serialize';
 import { WebglAddon } from '@xterm/addon-webgl';
-import { WebLinksAddon } from '@xterm/addon-web-links';
+// WebLinksAddon removed — replaced by custom multi-line link provider below
 import { Terminal as GhosttyTerminal, FitAddon as GhosttyFitAddon } from 'ghostty-web';
 import { DARK_THEME } from './theme';
 import { KittyKeyboardState, encodeKittyKey } from './kitty-keyboard';
 import { type PromptTracker, createPromptTracker } from './prompt-markers';
 import { USE_GHOSTTY } from './terminal-backend';
+import { useSettingsStore } from '../store/settings-store';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyTerminal = any;
@@ -19,6 +21,7 @@ interface TerminalEntry {
   fitAddon: AnyFitAddon;
   searchAddon: SearchAddon | null;
   serializeAddon: SerializeAddon | null;
+  webglAddon: WebglAddon | null;
   opened: boolean;
   /** Hold back output until the first resize so the shell prompt renders at the correct width */
   ready: boolean;
@@ -26,7 +29,12 @@ interface TerminalEntry {
   reparentEl?: HTMLElement;
   /** Extra rows rendered for smooth scroll headroom (subtracted from PTY resize) */
   smoothScrollRows: number;
+  /** Height of one cell in CSS pixels — set during first fit, used to compute headroom offset */
+  cellHeightPx: number;
 }
+
+/** Once WebGL fails for any terminal, all terminals skip it (VS Code pattern). */
+let webglAvailable = true;
 
 const registry = new Map<string, TerminalEntry>();
 const cwdCallbacks = new Map<string, Set<(cwd: string) => void>>();
@@ -105,6 +113,20 @@ function registerGlobalListeners() {
   });
 }
 
+/** Convert a flat character offset into a {line, col} position using a line map. */
+function flatToPos(offset: number, lineMap: { line: number; offset: number; length: number }[]): { line: number; col: number } | null {
+  for (const lm of lineMap) {
+    if (offset >= lm.offset && offset < lm.offset + lm.length) {
+      return { line: lm.line, col: offset - lm.offset };
+    }
+  }
+  const last = lineMap[lineMap.length - 1];
+  if (last && offset >= last.offset) {
+    return { line: last.line, col: Math.min(offset - last.offset, last.length - 1) };
+  }
+  return null;
+}
+
 /**
  * Get or create a Terminal for a given sessionId.
  * If the terminal already exists, reparents its DOM element into the container.
@@ -140,17 +162,20 @@ export function attachTerminal(sessionId: string, container: HTMLDivElement): Te
   let fitAddon: AnyFitAddon;
   let searchAddon: SearchAddon | null = null;
   let serializeAddon: SerializeAddon | null = null;
+  let webglAddon: WebglAddon | null = null;
   let reparentEl: HTMLElement | undefined;
+
+  const termSettings = useSettingsStore.getState().terminal;
 
   if (USE_GHOSTTY) {
     // --- ghostty-web backend ---
     try {
       terminal = new GhosttyTerminal({
         theme: DARK_THEME,
-        fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+        fontFamily: termSettings.fontFamily,
         fontSize: currentFontSize,
-        cursorBlink: true,
-        cursorStyle: 'bar',
+        cursorBlink: termSettings.cursorBlink,
+        cursorStyle: termSettings.cursorStyle,
       });
 
       fitAddon = new GhosttyFitAddon();
@@ -284,19 +309,15 @@ export function attachTerminal(sessionId: string, container: HTMLDivElement): Te
     // --- xterm.js backend ---
     terminal = new XtermTerminal({
       theme: DARK_THEME,
-      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+      fontFamily: termSettings.fontFamily,
       fontSize: currentFontSize,
-      lineHeight: 1.2,
-      scrollback: 10_000,
-      cursorBlink: true,
-      cursorStyle: 'bar',
+      lineHeight: termSettings.lineHeight,
+      scrollback: termSettings.scrollback,
+      cursorBlink: termSettings.cursorBlink,
+      cursorStyle: termSettings.cursorStyle,
       allowProposedApi: true,
-      macOptionIsMeta: true,
-      linkHandler: {
-        activate(_event: MouseEvent, text: string) {
-          window.termyApi.shell.openExternal(text);
-        },
-      },
+      macOptionIsMeta: termSettings.macOptionIsMeta,
+      // Link handling is done by the custom multi-line provider below
     });
 
     const xtermFit = new XtermFitAddon();
@@ -306,9 +327,50 @@ export function attachTerminal(sessionId: string, container: HTMLDivElement): Te
     terminal.loadAddon(xtermFit);
     terminal.loadAddon(searchAddon);
     terminal.loadAddon(serializeAddon);
-    terminal.loadAddon(new WebLinksAddon((_event, uri) => {
-      window.termyApi.shell.openExternal(uri);
-    }));
+    // Custom link provider that joins wrapped lines to detect multi-line URLs.
+    // Replaces WebLinksAddon which only detects URLs within a single line.
+    terminal.registerLinkProvider({
+      provideLinks(bufferLineNumber: number, callback: (links: { range: { start: { x: number; y: number }; end: { x: number; y: number } }; text: string; activate: () => void }[] | undefined) => void) {
+        const buffer = terminal.buffer.active;
+        // Walk back to find the start of the wrapped line group
+        let startLine = bufferLineNumber - 1; // 0-indexed
+        while (startLine > 0 && buffer.getLine(startLine)?.isWrapped) startLine--;
+        // Join all wrapped lines into one string, tracking where each line starts
+        const lineMap: { line: number; offset: number; length: number }[] = [];
+        let fullText = '';
+        let cur = startLine;
+        while (cur < buffer.length) {
+          const line = buffer.getLine(cur);
+          if (!line) break;
+          if (cur > startLine && !line.isWrapped) break;
+          const text = line.translateToString(false);
+          lineMap.push({ line: cur, offset: fullText.length, length: text.length });
+          fullText += text;
+          cur++;
+        }
+        // Find URLs in the joined text
+        const urlRe = /https?:\/\/[^\s<>"'`),;}\]]+/g;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const links: any[] = [];
+        let match;
+        while ((match = urlRe.exec(fullText)) !== null) {
+          const urlStart = match.index;
+          const urlEnd = urlStart + match[0].length - 1;
+          const startPos = flatToPos(urlStart, lineMap);
+          const endPos = flatToPos(urlEnd, lineMap);
+          if (!startPos || !endPos) continue;
+          links.push({
+            range: {
+              start: { x: startPos.col + 1, y: startPos.line + 1 }, // 1-indexed
+              end: { x: endPos.col + 1, y: endPos.line + 1 },
+            },
+            text: match[0],
+            activate() { window.termyApi.shell.openExternal(this.text); },
+          });
+        }
+        callback(links.length > 0 ? links : undefined);
+      },
+    });
 
     // Kitty keyboard protocol support
     // xterm.js tracks state via registerCsiHandler (not the global scanner),
@@ -426,11 +488,26 @@ export function attachTerminal(sessionId: string, container: HTMLDivElement): Te
 
     terminal.open(container);
 
-    // Try WebGL renderer
-    try {
-      terminal.loadAddon(new WebglAddon());
-    } catch {
-      // Canvas fallback is fine
+    // Try WebGL renderer — handle context loss gracefully (VS Code pattern).
+    // Chromium limits active WebGL contexts to ~16 per renderer process;
+    // exceeding this silently kills the oldest context.
+    if (webglAvailable) {
+      try {
+        webglAddon = new WebglAddon();
+        webglAddon.onContextLoss(() => {
+          console.warn(`[terminal] WebGL context lost for session ${sessionId}, falling back to DOM renderer`);
+          webglAddon?.dispose();
+          webglAddon = null;
+          const entry = registry.get(sessionId);
+          if (entry) entry.webglAddon = null;
+        });
+        terminal.loadAddon(webglAddon);
+      } catch {
+        console.warn('[terminal] WebGL addon failed to load, disabling for all future terminals');
+        webglAddon?.dispose();
+        webglAddon = null;
+        webglAvailable = false;
+      }
     }
 
     // Sub-pixel smooth scrolling setup: render N+1 rows so the trailing
@@ -474,13 +551,49 @@ export function attachTerminal(sessionId: string, container: HTMLDivElement): Te
       (terminal.element as HTMLElement).style.height = '';
       origFit();
       const ch = getCellHeight();
+      if (entry) entry.cellHeightPx = ch;
       (terminal.element as HTMLElement).style.height =
         `${(terminal.element as HTMLElement).offsetHeight + ch}px`;
+
+      // Before the +1 resize, temporarily move the cursor up so xterm.js
+      // adds a blank line instead of pulling from scrollback. xterm.js only
+      // pulls when `y >= rows - 1` (cursor at bottom); one row higher makes
+      // it add a blank line for the headroom row, leaving the buffer intact.
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const buffer = (terminal as any)._core._bufferService.buffer;
+        if (buffer.y >= terminal.rows - 1 && buffer.ybase > 0) {
+          buffer.y = terminal.rows - 2;
+        }
+      } catch { /* ignore */ }
+
       terminal.resize(terminal.cols, terminal.rows + 1);
       pinScrollRegion();
     };
 
     fitAddon.fit();
+
+    // Re-pin scroll region after any write that includes a DECSTBM reset.
+    // Shells routinely send \x1b[r (reset scroll margins) during prompt
+    // rendering, after SIGWINCH, and on alternate-screen exit. This resets
+    // scrollBottom to terminal.rows-1, which includes the headroom row.
+    // Clamping it back after each write keeps the cursor out of the
+    // hidden headroom row so output doesn't render below the visible area.
+    terminal.onWriteParsed(() => {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const buffer = (terminal as any)._core._bufferService.buffer;
+        const maxBottom = terminal.rows - 2;
+        if (buffer.scrollBottom > maxBottom) {
+          buffer.scrollBottom = maxBottom;
+        }
+        // If the cursor drifted onto the headroom row (output processed
+        // with the wrong scroll region before re-pin), clamp it back.
+        if (buffer.y > maxBottom) {
+          buffer.y = maxBottom;
+        }
+      } catch { /* internal API unavailable */ }
+    });
 
     {
       const screen = (terminal.element as HTMLElement)?.querySelector('.xterm-screen') as HTMLElement | null;
@@ -588,7 +701,7 @@ export function attachTerminal(sessionId: string, container: HTMLDivElement): Te
     });
   }
 
-  entry = { terminal, fitAddon, searchAddon, serializeAddon, opened: true, ready: false, reparentEl, smoothScrollRows: USE_GHOSTTY ? 0 : 1 };
+  entry = { terminal, fitAddon, searchAddon, serializeAddon, webglAddon, opened: true, ready: false, reparentEl, smoothScrollRows: USE_GHOSTTY ? 0 : 1, cellHeightPx: 0 };
   registry.set(sessionId, entry);
 
   // Don't replay pending output here — wait for activateTerminal() after
@@ -632,6 +745,7 @@ export function activateTerminal(sessionId: string): void {
 export function disposeTerminal(sessionId: string): void {
   const entry = registry.get(sessionId);
   if (!entry) return;
+  entry.webglAddon?.dispose();
   entry.terminal.dispose();
   registry.delete(sessionId);
   kittyStates.delete(sessionId);
@@ -644,6 +758,37 @@ export function disposeTerminal(sessionId: string): void {
   searchCursors.delete(sessionId);
 }
 
+
+/**
+ * Rebuild WebGL renderers for all terminals after system sleep/wake.
+ * GPU textures get corrupted on resume but no webglcontextlost event fires,
+ * so we proactively dispose and recreate the addon.
+ */
+export function rebuildWebgl(): void {
+  if (!webglAvailable) return;
+  for (const [sessionId, entry] of registry) {
+    // Dispose old WebGL addon if present
+    if (entry.webglAddon) {
+      try { entry.webglAddon.dispose(); } catch { /* ignore */ }
+      entry.webglAddon = null;
+    }
+    // Recreate
+    try {
+      const addon = new WebglAddon();
+      addon.onContextLoss(() => {
+        console.warn(`[terminal] WebGL context lost for session ${sessionId}, falling back to DOM renderer`);
+        addon.dispose();
+        entry.webglAddon = null;
+      });
+      entry.terminal.loadAddon(addon);
+      entry.webglAddon = addon;
+    } catch {
+      console.warn('[terminal] WebGL rebuild failed, disabling for all terminals');
+      webglAvailable = false;
+      break;
+    }
+  }
+}
 
 /**
  * Resize the PTY for a session, subtracting smooth scroll headroom rows
@@ -677,6 +822,34 @@ export function fitTerminal(sessionId: string): void {
 /**
  * Get the Terminal instance for a session.
  */
+/** Returns the pixel height of the smooth-scroll headroom row for a session (0 for ghostty). */
+export function getTerminalHeadroomHeight(sessionId: string): number {
+  const e = registry.get(sessionId);
+  return (e?.cellHeightPx ?? 0) * (e?.smoothScrollRows ?? 0);
+}
+
+/**
+ * Returns 0–1 indicating how full the terminal viewport is with content.
+ * 0 = empty, 1 = content fills the viewport or has scrollback.
+ * Uses cursorY (viewport-relative) so scrollback history doesn't inflate the ratio.
+ */
+export function getContentFillRatio(sessionId: string): number {
+  const entry = registry.get(sessionId);
+  if (!entry) return 1;
+  try {
+    const buffer = entry.terminal.buffer.active;
+    // baseY > 0 means there's scrollback — viewport is fully filled
+    if (buffer.baseY > 0) return 1;
+    // No scrollback: cursor row within the viewport tells us how much is filled
+    // Subtract smooth scroll headroom — the extra row is never used by the cursor
+    const viewportRows = entry.terminal.rows - (entry.smoothScrollRows ?? 0);
+    if (viewportRows <= 0) return 1;
+    return Math.min(1, (buffer.cursorY + 1) / viewportRows);
+  } catch {
+    return 1;
+  }
+}
+
 export function getTerminalEntry(sessionId: string): TerminalEntry | undefined {
   return registry.get(sessionId);
 }
@@ -723,25 +896,29 @@ const searchCursors = new Map<string, { line: number; col: number }>();
  * Uses xterm SearchAddon when available, falls back to buffer scanning + select().
  * Returns true if a match was found.
  */
-export function searchTerminal(sessionId: string, query: string, direction: 'next' | 'previous'): boolean {
+export type { ISearchOptions };
+
+export function searchTerminal(sessionId: string, query: string, direction: 'next' | 'previous', options?: ISearchOptions): boolean {
   const entry = registry.get(sessionId);
   if (!entry || !query) return false;
 
   // Use xterm SearchAddon if available
   if (entry.searchAddon) {
     if (direction === 'next') {
-      return entry.searchAddon.findNext(query);
+      return entry.searchAddon.findNext(query, options);
     } else {
-      return entry.searchAddon.findPrevious(query);
+      return entry.searchAddon.findPrevious(query, options);
     }
   }
 
   // Buffer-based search fallback (works with any backend)
+  // Supports caseSensitive from options; regex/decorations silently ignored
+  const caseSensitive = options?.caseSensitive ?? false;
   const terminal = entry.terminal;
   const buffer = terminal.buffer.active;
   const totalLines = buffer.length;
   const cursor = searchCursors.get(sessionId) ?? { line: buffer.baseY + buffer.cursorY, col: 0 };
-  const lowerQuery = query.toLowerCase();
+  const searchQuery = caseSensitive ? query : query.toLowerCase();
 
   const step = direction === 'next' ? 1 : -1;
   let startLine = cursor.line;
@@ -751,14 +928,15 @@ export function searchTerminal(sessionId: string, query: string, direction: 'nex
     const lineIdx = ((startLine + i * step) % totalLines + totalLines) % totalLines;
     const bufLine = buffer.getLine(lineIdx);
     if (!bufLine) continue;
-    const text = bufLine.translateToString(false).toLowerCase();
+    const rawText = bufLine.translateToString(false);
+    const text = caseSensitive ? rawText : rawText.toLowerCase();
 
     let searchFrom = (i === 0) ? startCol : (direction === 'next' ? 0 : text.length - 1);
     let matchIdx: number;
     if (direction === 'next') {
-      matchIdx = text.indexOf(lowerQuery, Math.max(0, searchFrom));
+      matchIdx = text.indexOf(searchQuery, Math.max(0, searchFrom));
     } else {
-      matchIdx = text.lastIndexOf(lowerQuery, searchFrom);
+      matchIdx = text.lastIndexOf(searchQuery, searchFrom);
     }
 
     if (matchIdx !== -1) {
@@ -772,6 +950,19 @@ export function searchTerminal(sessionId: string, query: string, direction: 'nex
 }
 
 /**
+ * Subscribe to search result changes for a session.
+ * Returns a disposable to unsubscribe. No-op if SearchAddon is unavailable.
+ */
+export function subscribeSearchResults(
+  sessionId: string,
+  callback: (event: { resultIndex: number; resultCount: number }) => void
+): { dispose: () => void } {
+  const entry = registry.get(sessionId);
+  if (!entry?.searchAddon) return { dispose: () => {} };
+  return entry.searchAddon.onDidChangeResults(callback);
+}
+
+/**
  * Clear search state for a session.
  */
 export function clearSearch(sessionId: string): void {
@@ -782,6 +973,83 @@ export function clearSearch(sessionId: string): void {
     entry.searchAddon.clearDecorations();
   }
   entry.terminal.clearSelection();
+}
+
+/**
+ * Clear only search decorations (not terminal selection).
+ * Use when closing search without disrupting an in-progress text selection.
+ */
+export function clearSearchDecorations(sessionId: string): void {
+  const entry = registry.get(sessionId);
+  if (!entry) return;
+  searchCursors.delete(sessionId);
+  if (entry.searchAddon) {
+    entry.searchAddon.clearDecorations();
+  }
+}
+
+/**
+ * Search the full terminal buffer for a query and return the first match with context lines.
+ */
+export function searchBuffer(
+  sessionId: string, query: string, contextLines = 1,
+): { matchLine: string; contextBefore: string[]; contextAfter: string[]; lineNumber: number } | null {
+  const entry = registry.get(sessionId);
+  if (!entry || !query) return null;
+  const buffer = entry.terminal.buffer.active;
+  const total = buffer.length;
+  const lowerQuery = query.toLowerCase();
+  // Search recent 500 lines from the bottom — cap to avoid scanning full 10K scrollback
+  const searchStart = Math.max(0, total - 500);
+
+  // Build logical line groups (joining soft-wrapped physical lines)
+  const groups: { start: number; end: number; text: string }[] = [];
+  for (let i = searchStart; i < total; ) {
+    let groupEnd = i;
+    while (groupEnd + 1 < total && buffer.getLine(groupEnd + 1)?.isWrapped) groupEnd++;
+    let text = '';
+    for (let j = i; j <= groupEnd; j++) {
+      const l = buffer.getLine(j);
+      // Only trim the last physical line — intermediate wrapped lines may have
+      // trailing spaces that are real content (e.g. "reach out to |Anthropic")
+      if (l) text += l.translateToString(j === groupEnd);
+    }
+    groups.push({ start: i, end: groupEnd, text });
+    i = groupEnd + 1;
+  }
+
+  const getContext = (beforeLine: number, afterLine: number) => {
+    const before: string[] = [];
+    const after: string[] = [];
+    for (let j = Math.max(0, beforeLine - contextLines); j < beforeLine; j++) {
+      const l = buffer.getLine(j);
+      if (l) before.push(l.translateToString(true));
+    }
+    for (let j = afterLine + 1; j <= Math.min(total - 1, afterLine + contextLines); j++) {
+      const l = buffer.getLine(j);
+      if (l) after.push(l.translateToString(true));
+    }
+    return { before, after };
+  };
+
+  // Search from bottom — most recent match first
+  for (let g = groups.length - 1; g >= 0; g--) {
+    // Single group match
+    if (groups[g].text.toLowerCase().includes(lowerQuery)) {
+      const { before, after } = getContext(groups[g].start, groups[g].end);
+      return { matchLine: groups[g].text, contextBefore: before, contextAfter: after, lineNumber: groups[g].start };
+    }
+    // Cross-line match: join with the group below to catch queries spanning a line break
+    if (g + 1 < groups.length) {
+      const joined = groups[g].text.trimEnd() + '\n' + groups[g + 1].text;
+      // Normalize whitespace for matching (collapse \n + spaces to single space)
+      if (joined.replace(/\s+/g, ' ').toLowerCase().includes(lowerQuery)) {
+        const { before, after } = getContext(groups[g].start, groups[g + 1].end);
+        return { matchLine: joined, contextBefore: before, contextAfter: after, lineNumber: groups[g].start };
+      }
+    }
+  }
+  return null;
 }
 
 /**
@@ -840,6 +1108,30 @@ export function setAllFontSize(size: number): void {
  */
 export function getFontSize(): number {
   return currentFontSize;
+}
+
+/**
+ * Apply terminal settings (font family, cursor, line height, etc.) to all existing terminals.
+ * Called when settings change.
+ */
+export function applyTerminalSettings(): void {
+  const s = useSettingsStore.getState().terminal;
+  currentFontSize = s.fontSize;
+  for (const entry of registry.values()) {
+    const opts = entry.terminal.options;
+    opts.fontFamily = s.fontFamily;
+    opts.fontSize = s.fontSize;
+    if (opts.lineHeight !== undefined) opts.lineHeight = s.lineHeight;
+    opts.cursorBlink = s.cursorBlink;
+    opts.cursorStyle = s.cursorStyle;
+    if (opts.scrollback !== undefined) opts.scrollback = s.scrollback;
+    if (opts.macOptionIsMeta !== undefined) opts.macOptionIsMeta = s.macOptionIsMeta;
+    try {
+      entry.fitAddon.fit();
+    } catch {
+      // ignore
+    }
+  }
 }
 
 /**

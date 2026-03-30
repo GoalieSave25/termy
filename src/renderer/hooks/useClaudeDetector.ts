@@ -5,7 +5,13 @@ import { onTitleChange } from '../lib/terminal-registry';
 
 function isClaudeTitle(title: string): boolean {
   const lower = title.toLowerCase();
-  return lower === 'claude' || lower.startsWith('claude:') || lower.startsWith('claude code');
+  // Claude Code titles are prefixed with a status char: "✳ Claude Code", "⠂ Claude Code"
+  return lower === 'claude' || lower.includes('claude code') || lower.includes('claude:');
+}
+
+function isSpinnerChar(cp: number): boolean {
+  // Braille patterns (U+2800–U+28FF) — used by Claude Code's spinner
+  return cp >= 0x2800 && cp <= 0x28FF;
 }
 
 export function useClaudeDetector() {
@@ -14,6 +20,8 @@ export function useClaudeDetector() {
   const idleTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   // Track which sessions were detected via title vs process scan
   const detectedViaTitle = useRef<Set<string>>(new Set());
+  // Track sessions that have shown a spinner title (to detect completion)
+  const spinnerSeenRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -33,9 +41,37 @@ export function useClaudeDetector() {
         if (!trackedSessions.current.has(sessionId)) {
           trackedSessions.current.add(sessionId);
           const unsub = onTitleChange(sessionId, (title) => {
-            const isClaude = isClaudeTitle(title);
+            console.log('[termy] title:', sessionId, JSON.stringify(title));
             const s = useSessionStore.getState().sessions[sessionId];
             if (!s) return;
+
+            // Spinner-based detection FIRST — must run before the text-based
+            // reset below, which would clear spinnerSeen and prevent completion.
+            // Claude Code prefixes ALL titles with ⠂/⠐ (active) or ✳ (idle).
+            const firstCp = title.codePointAt(0) ?? 0;
+            if (isSpinnerChar(firstCp)) {
+              spinnerSeenRef.current.add(sessionId);
+              if (!s.isClaudeSession) {
+                detectedViaTitle.current.add(sessionId);
+                useSessionStore.getState().updateSession(sessionId, {
+                  isClaudeSession: true,
+                  claudeState: 'active',
+                });
+              }
+            } else if (firstCp === 0x2733 && spinnerSeenRef.current.has(sessionId)) {
+              // ✳ after spinner = Claude finished its turn
+              spinnerSeenRef.current.delete(sessionId);
+              // Don't highlight if this terminal is already focused
+              const layout = useLayoutStore.getState();
+              const activeTab = layout.tabs.find(t => t.id === layout.activeTabId);
+              const focusedItem = activeTab?.carouselItems[activeTab.carouselFocusedIndex];
+              if (!focusedItem || focusedItem.sessionId !== sessionId || layout.carouselZoomedOut) {
+                useSessionStore.getState().updateSession(sessionId, { claudeCompleted: true });
+              }
+            }
+
+            // Text-based Claude detection (title contains "claude")
+            const isClaude = isClaudeTitle(title) || isSpinnerChar(firstCp) || firstCp === 0x2733;
             if (!s.isClaudeSession && isClaude) {
               detectedViaTitle.current.add(sessionId);
               useSessionStore.getState().updateSession(sessionId, {
@@ -45,6 +81,7 @@ export function useClaudeDetector() {
             } else if (s.isClaudeSession && !isClaude) {
               // Title changed away from Claude (e.g. back to shell prompt)
               detectedViaTitle.current.delete(sessionId);
+              spinnerSeenRef.current.delete(sessionId);
               useSessionStore.getState().updateSession(sessionId, {
                 isClaudeSession: false,
                 claudeState: 'inactive',
@@ -122,6 +159,7 @@ export function useClaudeDetector() {
           titleUnsubs.current.delete(sessionId);
           trackedSessions.current.delete(sessionId);
           detectedViaTitle.current.delete(sessionId);
+          spinnerSeenRef.current.delete(sessionId);
           const timer = idleTimers.current.get(sessionId);
           if (timer) clearTimeout(timer);
           idleTimers.current.delete(sessionId);
@@ -143,6 +181,7 @@ export function useClaudeDetector() {
       titleUnsubs.current.clear();
       trackedSessions.current.clear();
       detectedViaTitle.current.clear();
+      spinnerSeenRef.current.clear();
       for (const timer of idleTimers.current.values()) clearTimeout(timer);
       idleTimers.current.clear();
     };

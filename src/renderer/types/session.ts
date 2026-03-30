@@ -19,4 +19,5 @@ export interface TerminalSession {
   isClaudeSession: boolean;
   claudeState: ClaudeState;
   claudeStatus?: ClaudeStatusData;
+  claudeCompleted?: boolean;
 }

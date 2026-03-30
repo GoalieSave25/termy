@@ -116,14 +116,18 @@ interface LayoutState {
   isDraggingTab: boolean;
   searchOpenPaneId: string | null;
   carouselZoomedOut: boolean;
+  carouselProgress: number;
   visibleCount: number;
+  isMaximized: boolean;
+  fuzzyFinderOpen: boolean;
+  settingsOpen: boolean;
 
   // Tab actions
   createTab: () => Promise<void>;
   closeTab: (tabId: TabId) => void;
   setActiveTab: (tabId: TabId) => void;
   renameTab: (tabId: TabId, label: string, manual?: boolean) => void;
-  reorderTab: (fromTabId: TabId, toTabId: TabId) => void;
+  reorderTab: (fromTabId: TabId, toIndex: number) => void;
   setDraggingTab: (dragging: boolean) => void;
 
   // Navigation
@@ -148,6 +152,7 @@ interface LayoutState {
 
   // Carousel actions
   setCarouselZoomedOut: (zoomed: boolean) => void;
+  setCarouselProgress: (progress: number) => void;
   carouselAddTerminal: () => Promise<string>;
   carouselRemoveTerminal: (itemId: string) => void;
   carouselReorder: (fromIndex: number, toIndex: number) => void;
@@ -156,6 +161,15 @@ interface LayoutState {
 
   // Visible count
   setVisibleCount: (n: number) => void;
+
+  // Maximize
+  toggleMaximized: () => void;
+
+  // Fuzzy finder
+  setFuzzyFinderOpen: (open: boolean) => void;
+
+  // Settings
+  setSettingsOpen: (open: boolean) => void;
 
   // Helpers
   getActiveTab: () => Tab | undefined;
@@ -169,7 +183,11 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
   isDraggingTab: false,
   searchOpenPaneId: null,
   carouselZoomedOut: false,
+  carouselProgress: 0,
   visibleCount: 2,
+  isMaximized: false,
+  fuzzyFinderOpen: false,
+  settingsOpen: false,
 
   initFirstTab: async () => {
     // Try to restore from a previous renderer reload (HMR or full refresh)
@@ -309,6 +327,7 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
       tabs: [...state.tabs, tab],
       activeTabId: tabId,
       carouselZoomedOut: false,
+      isMaximized: false,
     }));
   },
 
@@ -336,7 +355,7 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
   },
 
   setActiveTab: (tabId: TabId) => {
-    set({ activeTabId: tabId, carouselZoomedOut: false });
+    set({ activeTabId: tabId, carouselZoomedOut: false, isMaximized: false });
   },
 
   renameTab: (tabId: TabId, label: string, manual?: boolean) => {
@@ -347,7 +366,7 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
 
   toggleZoom: () => {
     const state = get();
-    set({ carouselZoomedOut: !state.carouselZoomedOut });
+    set({ carouselZoomedOut: !state.carouselZoomedOut, isMaximized: false });
   },
 
   focusDirection: (direction) => {
@@ -415,14 +434,14 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
     set({ isDraggingTab: dragging });
   },
 
-  reorderTab: (fromTabId: TabId, toTabId: TabId) => {
+  reorderTab: (fromTabId: TabId, toIndex: number) => {
     set((state) => {
       const tabs = [...state.tabs];
       const fromIdx = tabs.findIndex((t) => t.id === fromTabId);
-      const toIdx = tabs.findIndex((t) => t.id === toTabId);
-      if (fromIdx === -1 || toIdx === -1) return state;
+      if (fromIdx === -1 || toIndex < 0 || toIndex >= tabs.length) return state;
+      if (fromIdx === toIndex) return state;
       const [moved] = tabs.splice(fromIdx, 1);
-      tabs.splice(toIdx, 0, moved);
+      tabs.splice(toIndex, 0, moved);
       return { tabs };
     });
   },
@@ -430,6 +449,9 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
   // Carousel actions
   setCarouselZoomedOut: (zoomed: boolean) => {
     set({ carouselZoomedOut: zoomed });
+  },
+  setCarouselProgress: (progress: number) => {
+    set({ carouselProgress: progress });
   },
 
   carouselAddTerminal: async () => {
@@ -449,6 +471,7 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
       const newIndex = newItems.length - 1;
       return {
         carouselZoomedOut: false,
+        isMaximized: false,
         tabs: s.tabs.map((tab) => {
           if (tab.id !== s.activeTabId) return tab;
           return {
@@ -552,6 +575,21 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
   // Visible count
   setVisibleCount: (n: number) => {
     set({ visibleCount: Math.max(1, n) });
+  },
+
+  // Maximize
+  toggleMaximized: () => {
+    set((s) => ({ isMaximized: !s.isMaximized }));
+  },
+
+  // Fuzzy finder
+  setFuzzyFinderOpen: (open: boolean) => {
+    set({ fuzzyFinderOpen: open });
+  },
+
+  // Settings
+  setSettingsOpen: (open: boolean) => {
+    set({ settingsOpen: open });
   },
 
   getActiveTab: () => {
