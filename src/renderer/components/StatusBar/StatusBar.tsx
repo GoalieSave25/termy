@@ -1,34 +1,46 @@
-import { useMemo } from 'react';
+import { useCallback } from 'react';
 import { useLayoutStore } from '../../store/layout-store';
 import { useSessionStore } from '../../store/session-store';
 import { ClaudeStatusWidget } from './ClaudeStatusWidget';
+import { useShallow } from 'zustand/react/shallow';
 
 export function StatusBar() {
-  const tabs = useLayoutStore((s) => s.tabs);
-  const activeTabId = useLayoutStore((s) => s.activeTabId);
-  const uiZoom = useLayoutStore((s) => s.uiZoom);
-  const visibleCount = useLayoutStore((s) => s.visibleCount);
-  const setVisibleCount = useLayoutStore((s) => s.setVisibleCount);
-  const carouselProgress = useLayoutStore((s) => s.carouselProgress);
-  const carouselScrollTo = useLayoutStore((s) => s.carouselScrollTo);
-  const sessions = useSessionStore((s) => s.sessions);
-
-  const tab = tabs.find((t) => t.id === activeTabId);
+  const {
+    tab,
+    uiZoom,
+    visibleCount,
+    setVisibleCount,
+    carouselProgress,
+    carouselScrollFraction,
+    carouselScrollTo,
+    isMaximized,
+  } = useLayoutStore(useShallow((s) => ({
+    tab: s.tabs.find((t) => t.id === s.activeTabId),
+    uiZoom: s.uiZoom,
+    visibleCount: s.visibleCount,
+    setVisibleCount: s.setVisibleCount,
+    carouselProgress: s.carouselProgress,
+    carouselScrollFraction: s.carouselScrollFraction,
+    carouselScrollTo: s.carouselScrollTo,
+    isMaximized: s.isMaximized,
+  })));
 
   const carouselItems = tab?.carouselItems ?? [];
   const carouselFocusedIndex = tab?.carouselFocusedIndex ?? 0;
   const carouselFocusedItemId = tab?.carouselFocusedItemId;
+  const focusedItem = carouselItems.find((c) => c.id === carouselFocusedItemId);
+  const focusedSessionId = focusedItem?.sessionId ?? null;
 
-  const completedSessionIds = useMemo(
-    () => new Set(carouselItems.filter(item => sessions[item.sessionId]?.claudeCompleted).map(item => item.sessionId)),
-    [sessions, carouselItems],
-  );
+  const completionFlags = useSessionStore(useShallow((state) => carouselItems.map(
+    (item) => Boolean(state.sessions[item.sessionId]?.claudeCompleted),
+  )));
+  const session = useSessionStore(useCallback((state) => (
+    focusedSessionId ? state.sessions[focusedSessionId] ?? null : null
+  ), [focusedSessionId]));
 
   if (!tab) return null;
 
   const count = carouselItems.length;
-  const focusedItem = carouselItems.find((c) => c.id === carouselFocusedItemId);
-  const session = focusedItem ? sessions[focusedItem.sessionId] : null;
 
   // Counter-zoom so the status bar stays the same physical size regardless of UI zoom
   const z = uiZoom;
@@ -60,56 +72,76 @@ export function StatusBar() {
       </div>
 
       {/* Carousel dot indicators — fade out in sync with window-mode transition */}
-      {count > 1 && (
-        <div
-          className="absolute left-1/2 -translate-x-1/2 flex items-center"
-          style={{
-            opacity: carouselProgress <= 0 ? 1 : Math.max(0, 1 - carouselProgress * 3),
-            pointerEvents: carouselProgress > 0.3 ? 'none' : undefined,
-          }}
-        >
-          {carouselItems.map((item, index) => {
-            const isCompleted = completedSessionIds.has(item.sessionId);
-            const isFocused = index === carouselFocusedIndex;
-            return (
-              <button
-                key={item.id}
-                className={`nav-dot flex items-center justify-center cursor-pointer${isFocused ? ' nav-dot-active' : ''}`}
-                style={{ width: 20, height: 20 }}
-                onClick={() => carouselScrollTo(index)}
-              >
-                {isCompleted ? (
-                  <div className="relative" style={{ width: 10, height: 10 }}>
-                    <div
-                      className="absolute inset-0 rounded-full"
-                      style={{
-                        background: '#2DA1FD',
-                        animation: 'claude-dot-ring 2s ease-out infinite',
-                      }}
-                    />
-                    <div
-                      className="absolute inset-0 rounded-full"
-                      style={{
-                        background: '#2DA1FD',
-                        animation: 'claude-dot-pulse 2s ease-in-out infinite',
-                        boxShadow: '0 0 3px rgba(45, 161, 253, 0.4)',
-                      }}
-                    />
-                  </div>
-                ) : (
-                  <div
-                    className={`nav-dot-circle rounded-full transition-all duration-200${isFocused ? ' active' : ''}`}
-                    style={{
-                      width: isFocused ? 10 : 8,
-                      height: isFocused ? 10 : 8,
-                    }}
-                  />
-                )}
-              </button>
-            );
-          })}
-        </div>
-      )}
+      {count > 1 && (() => {
+        const dotSize = 20;
+        const effectiveVis = isMaximized ? 1 : Math.min(visibleCount, count);
+        const showBox = count > effectiveVis;
+        return (
+          <div
+            className="absolute left-1/2 -translate-x-1/2 flex items-center"
+            style={{
+              opacity: carouselProgress <= 0 ? 1 : Math.max(0, 1 - carouselProgress * 3),
+              pointerEvents: carouselProgress > 0.3 ? 'none' : undefined,
+            }}
+          >
+            <div className="relative flex items-center">
+              {showBox && (
+                <div
+                  className="absolute pointer-events-none"
+                  style={{
+                    left: carouselScrollFraction * dotSize,
+                    width: effectiveVis * dotSize,
+                    top: 2,
+                    bottom: 2,
+                    border: '1.5px solid rgba(255,255,255,0.12)',
+                    borderRadius: 8,
+                  }}
+                />
+              )}
+              {carouselItems.map((item, index) => {
+                const isCompleted = completionFlags[index];
+                const isFocused = index === carouselFocusedIndex;
+                return (
+                  <button
+                    key={item.id}
+                    className={`nav-dot flex items-center justify-center cursor-pointer${isFocused ? ' nav-dot-active' : ''}`}
+                    style={{ width: dotSize, height: dotSize }}
+                    onClick={() => carouselScrollTo(index)}
+                  >
+                    {isCompleted ? (
+                      <div className="relative" style={{ width: 10, height: 10 }}>
+                        <div
+                          className="absolute inset-0 rounded-full"
+                          style={{
+                            background: '#2DA1FD',
+                            animation: 'claude-dot-ring 2s ease-out infinite',
+                          }}
+                        />
+                        <div
+                          className="absolute inset-0 rounded-full"
+                          style={{
+                            background: '#2DA1FD',
+                            animation: 'claude-dot-pulse 2s ease-in-out infinite',
+                            boxShadow: '0 0 3px rgba(45, 161, 253, 0.4)',
+                          }}
+                        />
+                      </div>
+                    ) : (
+                      <div
+                        className={`nav-dot-circle rounded-full transition-[width,height,background-color] duration-200${isFocused ? ' active' : ''}`}
+                        style={{
+                          width: isFocused ? 10 : 8,
+                          height: isFocused ? 10 : 8,
+                        }}
+                      />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Visible count stepper */}
       <div className="ml-auto flex items-center h-full" style={{ marginRight: 16 }}>

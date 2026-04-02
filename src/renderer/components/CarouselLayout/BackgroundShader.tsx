@@ -127,7 +127,10 @@ export function BackgroundShader({ progress, active }: BackgroundShaderProps) {
   } | null>(null);
   const activeRef = useRef(active);
   activeRef.current = active;
+  const progressRef = useRef(progress);
+  progressRef.current = progress;
   const timeOriginRef = useRef(performance.now());
+  const canvasSizeRef = useRef({ width: 0, height: 0 });
 
   // Draw a single frame immediately (used after resize to avoid black flash)
   function drawFrame() {
@@ -139,27 +142,20 @@ export function BackgroundShader({ progress, active }: BackgroundShaderProps) {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
-  // Initialize WebGL context, shaders, and geometry once
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const gl = canvas.getContext('webgl', { alpha: false, antialias: false });
-    if (!gl) return;
-    glRef.current = gl;
-
+  // Build (or rebuild) the shader program, geometry, and uniforms on a GL context.
+  function initGL(gl: WebGLRenderingContext): boolean {
     const vs = compileShader(gl, gl.VERTEX_SHADER, VERTEX_SHADER);
     const fs = compileShader(gl, gl.FRAGMENT_SHADER, FRAGMENT_SHADER);
-    if (!vs || !fs) return;
+    if (!vs || !fs) return false;
 
     const prog = gl.createProgram();
-    if (!prog) return;
+    if (!prog) return false;
     gl.attachShader(prog, vs);
     gl.attachShader(prog, fs);
     gl.linkProgram(prog);
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
       console.error('BackgroundShader link error:', gl.getProgramInfoLog(prog));
-      return;
+      return false;
     }
     programRef.current = prog;
     gl.useProgram(prog);
@@ -185,8 +181,45 @@ export function BackgroundShader({ progress, active }: BackgroundShaderProps) {
       if (loc) gl.uniform3f(loc, OCEAN_COLORS[i][0], OCEAN_COLORS[i][1], OCEAN_COLORS[i][2]);
     }
 
+    gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+    return true;
+  }
+
+  // Initialize WebGL context, shaders, and geometry; handle context loss/restore
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const gl = canvas.getContext('webgl', {
+      alpha: false,
+      antialias: false,
+      desynchronized: true,
+      powerPreference: 'low-power',
+    });
+    if (!gl) return;
+    glRef.current = gl;
+    initGL(gl);
+
+    const handleLost = (e: Event) => {
+      e.preventDefault(); // signal that we intend to restore
+      programRef.current = null;
+      uniformsRef.current = null;
+    };
+
+    const handleRestored = () => {
+      const gl = glRef.current;
+      if (!gl) return;
+      initGL(gl);
+      drawFrame();
+    };
+
+    canvas.addEventListener('webglcontextlost', handleLost);
+    canvas.addEventListener('webglcontextrestored', handleRestored);
+
     return () => {
-      gl.deleteProgram(prog);
+      canvas.removeEventListener('webglcontextlost', handleLost);
+      canvas.removeEventListener('webglcontextrestored', handleRestored);
+      gl.deleteProgram(programRef.current);
       glRef.current = null;
       programRef.current = null;
       uniformsRef.current = null;
@@ -201,9 +234,18 @@ export function BackgroundShader({ progress, active }: BackgroundShaderProps) {
     const obs = new ResizeObserver((entries) => {
       const rect = entries[0]?.contentRect;
       if (!rect || rect.width === 0) return;
-      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
-      canvas.width = rect.width * dpr;
-      canvas.height = rect.height * dpr;
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.25);
+      const nextWidth = Math.round(rect.width * dpr);
+      const nextHeight = Math.round(rect.height * dpr);
+      if (
+        canvasSizeRef.current.width === nextWidth &&
+        canvasSizeRef.current.height === nextHeight
+      ) {
+        return;
+      }
+      canvasSizeRef.current = { width: nextWidth, height: nextHeight };
+      canvas.width = nextWidth;
+      canvas.height = nextHeight;
       const gl = glRef.current;
       if (gl) {
         gl.viewport(0, 0, canvas.width, canvas.height);
@@ -223,14 +265,24 @@ export function BackgroundShader({ progress, active }: BackgroundShaderProps) {
     if (!gl || !uniforms) return;
 
     let rafId = 0;
+    let lastFrameTime = 0;
 
-    function render() {
-      if (!activeRef.current) return;
-      gl!.uniform1f(uniforms!.time, (performance.now() - timeOriginRef.current) * 0.001);
-      gl!.uniform2f(uniforms!.resolution, gl!.drawingBufferWidth, gl!.drawingBufferHeight);
-      gl!.drawArrays(gl!.TRIANGLE_STRIP, 0, 4);
+    const render = (now: number) => {
+      if (!activeRef.current || document.visibilityState !== 'visible') return;
+
+      const isTransitioning = progressRef.current > 0 && progressRef.current < 1;
+      const frameInterval = isTransitioning ? 1000 / 60 : 1000 / 30;
+      if (lastFrameTime !== 0 && now - lastFrameTime < frameInterval) {
+        rafId = requestAnimationFrame(render);
+        return;
+      }
+      lastFrameTime = now;
+
+      gl.uniform1f(uniforms.time, (performance.now() - timeOriginRef.current) * 0.001);
+      gl.uniform2f(uniforms.resolution, gl.drawingBufferWidth, gl.drawingBufferHeight);
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
       rafId = requestAnimationFrame(render);
-    }
+    };
     rafId = requestAnimationFrame(render);
 
     return () => cancelAnimationFrame(rafId);

@@ -67,6 +67,9 @@ const api: TermyApi = {
     show(opts: { title: string; body: string }): Promise<void> {
       return ipcRenderer.invoke(IpcInvoke.SHOW_NOTIFICATION, opts);
     },
+    bounceInformational(): void {
+      ipcRenderer.send(IpcSend.DOCK_BOUNCE_INFORMATIONAL);
+    },
     onClaude(callback: (data: ClaudeNotification) => void): () => void {
       const handler = (_event: Electron.IpcRendererEvent, data: ClaudeNotification) => callback(data);
       ipcRenderer.on(IpcOn.CLAUDE_NOTIFICATION, handler);

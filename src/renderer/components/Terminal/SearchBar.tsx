@@ -182,7 +182,7 @@ export function SearchBar({ sessionId, onClose }: SearchBarProps) {
             color: effectiveCaseSensitive ? '#e4e4e7' : 'rgba(255,255,255,0.3)',
             background: effectiveCaseSensitive ? 'rgba(255,255,255,0.12)' : 'transparent',
             border: effectiveCaseSensitive ? '1px solid rgba(255,255,255,0.15)' : '1px solid transparent',
-            transition: 'all 80ms ease',
+            transition: 'color 80ms ease, background-color 80ms ease, border-color 80ms ease',
             lineHeight: 1.3,
           }}
           title={effectiveCaseSensitive && !caseSensitive ? 'Match Case (auto: uppercase detected)' : 'Match Case'}
@@ -203,7 +203,7 @@ export function SearchBar({ sessionId, onClose }: SearchBarProps) {
             color: useRegex ? '#e4e4e7' : 'rgba(255,255,255,0.3)',
             background: useRegex ? 'rgba(255,255,255,0.12)' : 'transparent',
             border: useRegex ? '1px solid rgba(255,255,255,0.15)' : '1px solid transparent',
-            transition: 'all 80ms ease',
+            transition: 'color 80ms ease, background-color 80ms ease, border-color 80ms ease',
             lineHeight: 1.3,
           }}
           title="Use Regular Expression"

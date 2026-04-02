@@ -5,6 +5,7 @@ import { NotificationServer } from './notification-server';
 import { registerIpcHandlers } from './ipc-handlers';
 import { buildMenu } from './menu';
 import { checkForUpdates } from './auto-updater';
+import { resolveShellEnv } from './shell-env';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 import started from 'electron-squirrel-startup';
@@ -63,7 +64,14 @@ const createWindow = () => {
 
 };
 
-app.on('ready', () => {
+app.on('ready', async () => {
+  // Resolve the user's login shell environment before creating any windows/PTYs.
+  // The renderer creates PTYs on first mount, so startup must block until the
+  // resolved PATH is ready or early terminals may inherit Electron's stripped
+  // environment and miss tools installed via nvm, Homebrew, cargo, etc.
+  const env = await resolveShellEnv();
+  ptyManager.setShellEnv(env);
+
   createWindow();
   notificationServer.start();
 

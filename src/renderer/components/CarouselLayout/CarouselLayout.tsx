@@ -1,4 +1,4 @@
-import { useRef, useEffect, useLayoutEffect, useCallback, useState, useMemo } from 'react';
+import { useRef, useEffect, useLayoutEffect, useCallback, useState, useMemo, type CSSProperties } from 'react';
 import { useLayoutStore } from '../../store/layout-store';
 import { CarouselTerminalCard, formatCwd } from './CarouselTerminalCard';
 import { useSessionStore } from '../../store/session-store';
@@ -6,7 +6,8 @@ import { BackgroundShader } from './BackgroundShader';
 import { setAnimatedRemove } from '../../lib/carousel-actions';
 import { getContentFillRatio } from '../../lib/terminal-registry';
 import { _zoomEnteredViaHold, clearZoomHold } from '../../hooks/useKeyboardShortcuts';
-import type { Tab, CarouselItem } from '../../types/tab';
+import type { Tab } from '../../types/tab';
+import { useShallow } from 'zustand/react/shallow';
 
 interface CarouselLayoutProps {
   tab: Tab;
@@ -125,20 +126,35 @@ export function CarouselLayout({ tab, isVisible }: CarouselLayoutProps) {
   // FLIP animation: old screen positions recorded before store removal
   const flipPositionsRef = useRef<Map<string, number> | null>(null);
 
-  const carouselZoomedOut = useLayoutStore((s) => s.carouselZoomedOut);
-  const setCarouselZoomedOut = useLayoutStore((s) => s.setCarouselZoomedOut);
-  const carouselScrollTo = useLayoutStore((s) => s.carouselScrollTo);
-  const carouselRemoveTerminal = useLayoutStore((s) => s.carouselRemoveTerminal);
-  const carouselAddTerminal = useLayoutStore((s) => s.carouselAddTerminal);
-  const carouselFocusItem = useLayoutStore((s) => s.carouselFocusItem);
-  const carouselReorder = useLayoutStore((s) => s.carouselReorder);
-  const visibleCount = useLayoutStore((s) => s.visibleCount);
-  const isMaximized = useLayoutStore((s) => s.isMaximized);
-  const uiZoom = useLayoutStore((s) => s.uiZoom);
+  const {
+    carouselZoomedOut,
+    setCarouselZoomedOut,
+    carouselScrollTo,
+    carouselRemoveTerminal,
+    carouselAddTerminal,
+    carouselFocusItem,
+    carouselUnfocus,
+    carouselReorder,
+    visibleCount,
+    isMaximized,
+    uiZoom,
+    setCarouselProgress,
+  } = useLayoutStore(useShallow((s) => ({
+    carouselZoomedOut: s.carouselZoomedOut,
+    setCarouselZoomedOut: s.setCarouselZoomedOut,
+    carouselScrollTo: s.carouselScrollTo,
+    carouselRemoveTerminal: s.carouselRemoveTerminal,
+    carouselAddTerminal: s.carouselAddTerminal,
+    carouselFocusItem: s.carouselFocusItem,
+    carouselUnfocus: s.carouselUnfocus,
+    carouselReorder: s.carouselReorder,
+    visibleCount: s.visibleCount,
+    isMaximized: s.isMaximized,
+    uiZoom: s.uiZoom,
+    setCarouselProgress: s.setCarouselProgress,
+  })));
 
   const { carouselItems, carouselFocusedIndex, carouselFocusedItemId } = tab;
-
-  const sessions = useSessionStore((s) => s.sessions);
 
   // visibleCount is a max — actual visible is capped by terminal count
   // Subtract removingIds.size so the width animation starts in parallel with the clip-path exit
@@ -146,6 +162,12 @@ export function CarouselLayout({ tab, isVisible }: CarouselLayoutProps) {
   const effectiveVisible = isMaximized
     ? 1
     : Math.min(visibleCount, Math.max(1, carouselItems.length - removingIds.size));
+
+  // Refs for syncPersistentLayer to compute scroll fraction without stale closures
+  const effectiveVisibleRef = useRef(effectiveVisible);
+  effectiveVisibleRef.current = effectiveVisible;
+  const containerWidthRef = useRef(containerSize.width);
+  containerWidthRef.current = containerSize.width;
 
   // Animate card width when effectiveVisible changes (e.g. adding a terminal)
   const [animatedVisible, setAnimatedVisible] = useState(effectiveVisible);
@@ -175,7 +197,6 @@ export function CarouselLayout({ tab, isVisible }: CarouselLayoutProps) {
   const realCardHeight = containerSize.height;
 
   // Keep refs in sync
-  const setCarouselProgress = useLayoutStore((s) => s.setCarouselProgress);
   useEffect(() => { progressRef.current = progress; setCarouselProgress(progress); }, [progress]);
   useLayoutEffect(() => {
     phaseRef.current = phase;
@@ -209,6 +230,10 @@ export function CarouselLayout({ tab, isVisible }: CarouselLayoutProps) {
     if (!persistentLayerRef.current) return;
     if (phaseRef.current === 'carousel') {
       persistentLayerRef.current.style.transform = `translateX(-${scrollOffsetRef.current}px)`;
+      const cw = containerWidthRef.current / (effectiveVisibleRef.current || 1);
+      if (cw > 0) {
+        useLayoutStore.getState().setCarouselScrollFraction(scrollOffsetRef.current / cw);
+      }
     } else {
       persistentLayerRef.current.style.transform = '';
     }
@@ -291,8 +316,8 @@ export function CarouselLayout({ tab, isVisible }: CarouselLayoutProps) {
   }, [phase]);
 
   // Refs so the keyboard handler can access callbacks without declaration order issues
-  const handleOverviewTapRef = useRef<(itemId: string) => void>(() => {});
-  const handleAddTerminalRef = useRef<() => void>(() => {});
+  const handleOverviewTapRef = useRef<(itemId: string) => void>(() => undefined);
+  const handleAddTerminalRef = useRef<() => void>(() => undefined);
 
   // Window mode keyboard navigation (Cmd+I/J/K/L + Enter)
   useEffect(() => {
@@ -329,7 +354,6 @@ export function CarouselLayout({ tab, isVisible }: CarouselLayoutProps) {
       if (currentIdx === -1) return;
 
       const row = Math.floor(currentIdx / cols);
-      const col = currentIdx % cols;
       let newIdx = currentIdx;
 
       if (dir === 'left') newIdx = currentIdx > 0 ? currentIdx - 1 : currentIdx;
@@ -485,6 +509,7 @@ export function CarouselLayout({ tab, isVisible }: CarouselLayoutProps) {
   // On focus change: scroll only if focused card is outside the visible viewport
   useEffect(() => {
     if (phase !== 'carousel' || isEnterAnimating.current || isExitAnimating.current) return;
+    if (carouselFocusedIndex < 0) return; // no terminal focused
     const cw = containerSize.width / effectiveVisible;
     const cardLeft = carouselFocusedIndex * cw;
     const cardRight = cardLeft + cw;
@@ -502,16 +527,11 @@ export function CarouselLayout({ tab, isVisible }: CarouselLayoutProps) {
     }
   }, [carouselFocusedIndex, phase, effectiveVisible, containerSize.width, carouselItems.length, animateScrollTo]);
 
-  // // Set initial scroll position when entering carousel mode or becoming visible
-  // useEffect(() => {
-  //   if (phase !== 'carousel' || !isVisible) return;
-  //   const cw = containerSize.width / effectiveVisible;
-  //   const max = Math.max(0, (carouselItems.length - effectiveVisible) * cw);
-  //   cancelAnimationFrame(scrollAnimRef.current);
-  //   scrollOffsetRef.current = clamp(carouselFocusedIndex * cw, 0, max);
-  //   syncPersistentLayer();
-  //   requestAnimationFrame(syncPersistentLayer);
-  // }, [isVisible, phase, containerSize.width]);
+  // Sync scroll fraction to store when this tab becomes visible
+  useEffect(() => {
+    if (phase !== 'carousel' || !isVisible) return;
+    syncPersistentLayer();
+  }, [isVisible, phase, syncPersistentLayer]);
 
   // Clamp scroll offset when items are removed
   useEffect(() => {
@@ -553,13 +573,19 @@ export function CarouselLayout({ tab, isVisible }: CarouselLayoutProps) {
         const target = clamp(snapped, 0, maxSnap);
         animateScrollTo(target);
 
-        const newIdx = clamp(Math.round(target / cw), 0, activeCount - 1);
-        if (newIdx !== carouselFocusedIndex) carouselScrollTo(newIdx);
+        // Unfocus if the focused card is no longer visible after snap
+        if (carouselFocusedIndex >= 0) {
+          const focusedLeft = carouselFocusedIndex * cw;
+          const focusedRight = focusedLeft + cw;
+          if (focusedRight <= target + 1 || focusedLeft >= target + containerSize.width - 1) {
+            carouselUnfocus();
+          }
+        }
       } else if (gestureType === 'gestureFlingCancel') {
         momentumLockedRef.current = false;
       }
     });
-  }, [animateScrollTo, effectiveVisible, carouselItems.length, removingIds.size, containerSize.width, carouselFocusedIndex, carouselScrollTo]);
+  }, [animateScrollTo, effectiveVisible, carouselItems.length, removingIds.size, containerSize.width, carouselFocusedIndex, carouselScrollTo, carouselUnfocus]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -606,13 +632,20 @@ export function CarouselLayout({ tab, isVisible }: CarouselLayoutProps) {
         const snapped = Math.round(scrollOffsetRef.current / cw) * cw;
         const target = clamp(snapped, 0, maxSnap);
         animateScrollTo(target);
-        const newIdx = clamp(Math.round(target / cw), 0, activeCount - 1);
-        if (newIdx !== carouselFocusedIndex) carouselScrollTo(newIdx);
+
+        // Unfocus if the focused card is no longer visible after snap
+        if (carouselFocusedIndex >= 0) {
+          const focusedLeft = carouselFocusedIndex * cw;
+          const focusedRight = focusedLeft + cw;
+          if (focusedRight <= target + 1 || focusedLeft >= target + containerSize.width - 1) {
+            carouselUnfocus();
+          }
+        }
       }, 150);
     };
     el.addEventListener('wheel', handler, { passive: false, capture: true });
     return () => el.removeEventListener('wheel', handler, { capture: true });
-  }, [syncPersistentLayer, animateScrollTo, effectiveVisible, carouselItems.length, removingIds.size, containerSize.width, carouselFocusedIndex, carouselScrollTo]);
+  }, [syncPersistentLayer, animateScrollTo, effectiveVisible, carouselItems.length, removingIds.size, containerSize.width, carouselFocusedIndex, carouselScrollTo, carouselUnfocus]);
 
   // --- Detect new terminals and animate them in ---
   // The width animation (animatedVisible) handles existing cards shrinking.
@@ -626,8 +659,8 @@ export function CarouselLayout({ tab, isVisible }: CarouselLayoutProps) {
       if (el && !screenIsFull) {
         isEnterAnimating.current = true;
         const anim = el.animate([
-          { clipPath: 'inset(0 100% 0 0)', opacity: 0 },
-          { clipPath: 'inset(0 0% 0 0)', opacity: 1 },
+          { transform: 'translateX(24px) scaleX(0.96)', opacity: 0 },
+          { transform: 'translateX(0) scaleX(1)', opacity: 1 },
         ], {
           duration: 280,
           easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
@@ -676,8 +709,8 @@ export function CarouselLayout({ tab, isVisible }: CarouselLayoutProps) {
 
     setRemovingIds((prev) => new Set(prev).add(itemId));
     const anim = el.animate([
-      { clipPath: 'inset(0 0% 0 0)', opacity: 1 },
-      { clipPath: 'inset(0 100% 0 0)', opacity: 0 },
+      { transform: 'translateX(0) scaleX(1)', opacity: 1 },
+      { transform: 'translateX(24px) scaleX(0.96)', opacity: 0 },
     ], {
       duration: 250,
       easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
@@ -780,6 +813,7 @@ export function CarouselLayout({ tab, isVisible }: CarouselLayoutProps) {
     : 0;
 
   const isCarousel = phase === 'carousel';
+  const shaderActive = phase === 'overview' || progress > 0.02;
 
 
   // ===================== RENDER =====================
@@ -788,13 +822,13 @@ export function CarouselLayout({ tab, isVisible }: CarouselLayoutProps) {
     <div className="w-full h-full flex flex-col overflow-hidden">
       {/* Content area */}
       <div ref={containerRef} className="flex-1 min-h-0 relative overflow-hidden">
-        <BackgroundShader progress={progress} active={phase !== 'carousel'} />
+        <BackgroundShader progress={progress} active={shaderActive} />
 
 
         {/* Scrollable layer — only scrolls in window mode */}
         <div
           ref={scrollRef}
-          className={`absolute inset-0 ${phase === 'overview' ? 'overflow-y-auto overflow-x-hidden' : ''}`}
+          className={`absolute inset-0 ${phase === 'overview' ? 'overflow-y-auto overflow-x-hidden window-mode-scrollbar' : ''}`}
           onDragOver={phase === 'overview' && isDraggingCard ? (e) => {
             e.preventDefault();
             e.dataTransfer.dropEffect = 'move';
@@ -881,6 +915,12 @@ export function CarouselLayout({ tab, isVisible }: CarouselLayoutProps) {
             const clippedH = overviewPos[i]?.clippedH ?? fullVisualH;
             const visualH = isCarousel ? fullVisualH : lerp(fullVisualH, clippedH, progress);
             const isComplete = progress >= 1;
+            const headerHeight = 30 + (30 / Math.max(s, 0.1) - 30) * progress;
+            const headerFontSize = 12 + (13 / Math.max(s, 0.1) - 12) * progress;
+            const headerPaddingX = 8 + (10 / Math.max(s, 0.1) - 8) * progress;
+            const isTerminalVisible = isVisible && isCarousel && !isRemoving
+              && x + realCardWidth > clampedScrollOffset
+              && x < clampedScrollOffset + containerSize.width;
 
             const isHighlighted = isComplete && highlightedItemId === item.id;
             const isFocusedCard = item.id === carouselFocusedItemId;
@@ -948,8 +988,9 @@ export function CarouselLayout({ tab, isVisible }: CarouselLayoutProps) {
                     : 'outline outline-1 outline-white/10'}`
                   : ''}`}
                 style={{
-                  left: (isDraggingCard && i === dragFromIdx && dragPos) ? dragPos.x : x,
-                  top: (isDraggingCard && i === dragFromIdx && dragPos) ? dragPos.y : y,
+                  left: 0,
+                  top: 0,
+                  translate: `${(isDraggingCard && i === dragFromIdx && dragPos) ? dragPos.x : x}px ${(isDraggingCard && i === dragFromIdx && dragPos) ? dragPos.y : y}px`,
                   zIndex: (() => {
                     if (isDraggingCard && i === dragFromIdx) return 100;
                     const cardRow = Math.floor(i / gridCols);
@@ -967,10 +1008,12 @@ export function CarouselLayout({ tab, isVisible }: CarouselLayoutProps) {
                   transition: (isDraggingCard && i === dragFromIdx)
                     ? 'opacity 200ms ease, transform 200ms ease'
                     : isComplete ? 'box-shadow 200ms ease, opacity 200ms ease, transform 150ms ease' : undefined,
-                  // Apply blur only at final state — animating blur per-frame is GPU-intensive
+                  willChange: phase === 'carousel' ? undefined : 'translate, width, height, opacity',
+                  // Keep blur only on the actively dragged card; applying it to every
+                  // overview card is one of the most expensive compositor paths here.
                   ...(progress >= 1 ? {
-                    backdropFilter: (isDraggingCard && i === dragFromIdx) ? 'blur(24px)' : 'blur(16px)',
-                    WebkitBackdropFilter: (isDraggingCard && i === dragFromIdx) ? 'blur(24px)' : 'blur(16px)',
+                    backdropFilter: (isDraggingCard && i === dragFromIdx) ? 'blur(18px)' : undefined,
+                    WebkitBackdropFilter: (isDraggingCard && i === dragFromIdx) ? 'blur(18px)' : undefined,
                   } : {}),
                   // Always set background (don't remove in carousel) to avoid
                   // compositing layer teardown that flashes the WebGL canvas.
@@ -987,6 +1030,11 @@ export function CarouselLayout({ tab, isVisible }: CarouselLayoutProps) {
                 <div
                   style={{
                     width: realCardWidth,
+                    '--card-header-height': `${headerHeight}px`,
+                    '--card-header-font-size': `${headerFontSize}px`,
+                    '--card-header-padding-x': `${headerPaddingX}px`,
+                    '--card-header-bg-alpha': `${1 - progress}`,
+                    '--card-header-shadow-alpha': `${0.03 * (1 - progress)}`,
                     // Crop to show bottom of content in overview. For full terminals,
                     // shows the bottom. For sparse terminals (e.g. just ran ls), shows
                     // everything from the top down to the content — no wasted blank space.
@@ -1006,16 +1054,14 @@ export function CarouselLayout({ tab, isVisible }: CarouselLayoutProps) {
                     opacity: isCarousel ? 1 : (isDraggingCard && i === dragFromIdx) ? 0.6 : lerp(1, phase === 'overview' ? (isHighlighted ? 1 : 0.5) : (isFocusedCard ? 1 : 0.5), progress),
                     willChange: 'transform',
                     transition: isComplete ? 'opacity 200ms ease' : undefined,
-                  }}
+                  } as CSSProperties}
                 >
                   <CarouselTerminalCard
                     item={item}
                     isFocused={isComplete ? false : (!isRemoving && item.id === carouselFocusedItemId)}
-                    isVisible={isVisible}
+                    isVisible={isTerminalVisible}
                     interactionDisabled={progress > 0.1}
                     resizeSuppressed={!isCarousel}
-                    overviewProgress={progress}
-                    cardScale={s}
                     onClose={() => isCarousel ? handleRemoveTerminal(item.id) : carouselRemoveTerminal(item.id)}
                     onTap={!isCarousel ? () => handleOverviewTap(item.id) : undefined}
                   />
@@ -1070,9 +1116,9 @@ export function CarouselLayout({ tab, isVisible }: CarouselLayoutProps) {
                       rounded-full bg-black/60 text-gray-500
                       hover:bg-red-500/90 hover:text-white hover:scale-110
                       active:scale-90 active:bg-red-600 active:text-white
-                      transition-all duration-150 ease-out z-30
+                      transition-[background-color,color,transform,opacity,box-shadow] duration-150 ease-out z-30
                       opacity-0 group-hover:opacity-100 cursor-pointer select-none
-                      backdrop-blur-sm shadow-sm hover:shadow-md hover:shadow-red-500/20"
+                      shadow-sm hover:shadow-md hover:shadow-red-500/20"
                     onClick={(e) => { e.stopPropagation(); carouselRemoveTerminal(item.id); }}
                   >
                     <svg width="8" height="8" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">

@@ -1,8 +1,9 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { memo, useRef, useEffect, useState, useCallback } from 'react';
 import { useTerminal } from '../../hooks/useTerminal';
 import { useLayoutStore } from '../../store/layout-store';
 import { useSessionStore } from '../../store/session-store';
 import { getTerminalEntry, setTerminalCursorBlink } from '../../lib/terminal-registry';
+import { markSessionInteraction } from '../../lib/session-interactions';
 import { shellEscapePath } from '../../hooks/useFileDrop';
 import { SearchBar } from '../Terminal/SearchBar';
 import type { CarouselItem } from '../../types/tab';
@@ -13,20 +14,16 @@ interface CarouselTerminalCardProps {
   isVisible: boolean;
   interactionDisabled?: boolean;
   resizeSuppressed?: boolean;
-  overviewProgress?: number;
-  cardScale?: number;
   onClose: () => void;
   onTap?: () => void;
 }
 
-export function CarouselTerminalCard({
+function CarouselTerminalCardInner({
   item,
   isFocused,
   isVisible,
   interactionDisabled,
   resizeSuppressed,
-  overviewProgress = 0,
-  cardScale = 1,
   onClose,
   onTap,
 }: CarouselTerminalCardProps) {
@@ -61,12 +58,17 @@ export function CarouselTerminalCard({
     } else if (interactionDisabled && terminalRef.current) {
       terminalRef.current?.blur();
     }
-    if (focused && session?.claudeCompleted) {
-      updateSession(item.sessionId, { claudeCompleted: false });
-    }
   }, [isFocused, isVisible, interactionDisabled]);
 
+  const clearCompleted = useCallback(() => {
+    markSessionInteraction(item.sessionId);
+    if (useSessionStore.getState().sessions[item.sessionId]?.claudeCompleted) {
+      updateSession(item.sessionId, { claudeCompleted: false });
+    }
+  }, [item.sessionId, updateSession]);
+
   const handleMouseDown = () => {
+    clearCompleted();
     if (interactionDisabled) {
       onTap?.();
       return;
@@ -142,19 +144,12 @@ export function CarouselTerminalCard({
   const displayCwd = formatCwd(session?.cwd ?? '~');
   const displayText = session?.summary || displayCwd;
 
-  // Scale header to remain readable in window mode.
-  // The card is rendered at full resolution then scaled down by cardScale,
-  // so we inflate dimensions by 1/cardScale to hit the target visual size.
-  const sc = Math.max(cardScale, 0.1);
-  const headerHeight = 30 + (30 / sc - 30) * overviewProgress;
-  const headerFontSize = 12 + (13 / sc - 12) * overviewProgress;
-  const headerPx = 8 + (10 / sc - 8) * overviewProgress;
-
   return (
     <div
       className="relative flex flex-col h-full transition-colors duration-300"
       style={{ backgroundColor: isFocused ? '#111111' : '#111111', overflow: 'visible' }}
       onMouseDown={handleMouseDown}
+      onKeyDownCapture={clearCompleted}
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
@@ -162,7 +157,7 @@ export function CarouselTerminalCard({
     >
       {/* Border — fades out during transition */}
       <div
-        className={`absolute inset-0 pointer-events-none z-10 transition-all duration-300 ${interactionDisabled ? 'rounded' : 'rounded-none'}`}
+        className={`absolute inset-0 pointer-events-none z-10 transition-[border-radius,border-color] duration-300 ${interactionDisabled ? 'rounded' : 'rounded-none'}`}
         style={{
           borderLeft: `1px solid ${interactionDisabled ? 'transparent' : '#181818'}`,
           borderRight: `1px solid ${interactionDisabled ? 'transparent' : '#181818'}`,
@@ -182,12 +177,12 @@ export function CarouselTerminalCard({
       <div
         className={`flex items-center select-none shrink-0 font-medium ${interactionDisabled ? 'rounded-t' : 'rounded-none'}`}
         style={{
-          height: headerHeight,
-          fontSize: headerFontSize,
-          paddingLeft: headerPx,
-          paddingRight: headerPx,
-          background: `linear-gradient(to bottom, rgba(24,24,24,${1 - overviewProgress}), transparent)`,
-          boxShadow: `0 1px 0 rgba(255,255,255,${0.03 * (1 - overviewProgress)})`,
+          height: 'var(--card-header-height, 30px)',
+          fontSize: 'var(--card-header-font-size, 12px)',
+          paddingLeft: 'var(--card-header-padding-x, 8px)',
+          paddingRight: 'var(--card-header-padding-x, 8px)',
+          background: 'linear-gradient(to bottom, rgba(24,24,24,var(--card-header-bg-alpha,1)), transparent)',
+          boxShadow: '0 1px 0 rgba(255,255,255,var(--card-header-shadow-alpha,0.03))',
           color: `rgba(255, 255, 255, ${isFocused && !interactionDisabled ? 0.6 : 0.35})`,
           transition: 'background 300ms, color 300ms',
         }}
@@ -288,6 +283,18 @@ export function CarouselTerminalCard({
     </div>
   );
 }
+
+export const CarouselTerminalCard = memo(
+  CarouselTerminalCardInner,
+  (prev, next) => (
+    prev.item.id === next.item.id &&
+    prev.item.sessionId === next.item.sessionId &&
+    prev.isFocused === next.isFocused &&
+    prev.isVisible === next.isVisible &&
+    prev.interactionDisabled === next.interactionDisabled &&
+    prev.resizeSuppressed === next.resizeSuppressed
+  ),
+);
 
 export function formatCwd(cwd: string): string {
   if (!cwd || cwd === '~') return '~';

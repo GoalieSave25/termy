@@ -48,6 +48,38 @@ html, body, #root {
   display: none;
 }
 
+.window-mode-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+}
+
+.window-mode-scrollbar::-webkit-scrollbar {
+  width: 12px;
+}
+
+.window-mode-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.window-mode-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+.window-mode-scrollbar:hover::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.28);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+.window-mode-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.38);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
 /* Make the xterm viewport transparent so our bg shows through */
 .xterm .xterm-viewport {
   overflow-y: auto !important;
@@ -138,6 +170,17 @@ html, body, #root {
 }
 .nav-dot:hover .nav-dot-circle:not(.active) {
   background: #747c89;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* Settings rows — no border on last item */

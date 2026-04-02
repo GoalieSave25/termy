@@ -12,12 +12,15 @@ export function usePaneSummaries() {
   useEffect(() => {
     const interval = setInterval(() => {
       const layoutState = useLayoutStore.getState();
-      const activeTab = layoutState.tabs.find((t) => t.id === layoutState.activeTabId);
-      if (!activeTab) return;
 
-      const sessionIds = new Set(activeTab.carouselItems.map((c) => c.sessionId));
+      const sessionIds = new Set<string>();
+      for (const tab of layoutState.tabs) {
+        for (const item of tab.carouselItems) {
+          sessionIds.add(item.sessionId);
+        }
+      }
 
-      // Clean up title watchers for sessions no longer in the active tab
+      // Clean up title watchers for sessions no longer in any tab
       for (const sessionId of trackedSessions.current) {
         if (!sessionIds.has(sessionId)) {
           titleUnsubs.current.get(sessionId)?.();

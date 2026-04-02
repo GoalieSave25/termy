@@ -2,27 +2,33 @@ import { useEffect, useRef } from 'react';
 import { attachTerminal, activateTerminal, fitTerminal, resizePty, onCwdChange } from '../lib/terminal-registry';
 import { USE_GHOSTTY } from '../lib/terminal-backend';
 
-/**
- * Composite all xterm canvas layers into a frozen snapshot overlay.
- * Must be called synchronously before fit() so WebGL's backbuffer is still intact.
- * Returns a canvas element styled to cover the container, or null if unavailable.
- */
 function snapshotTerminalCanvas(container: HTMLElement): HTMLCanvasElement | null {
   const canvases = Array.from(container.querySelectorAll<HTMLCanvasElement>('canvas'));
   if (canvases.length === 0) return null;
   const first = canvases[0];
-  const w = first.width;
-  const h = first.height;
-  if (w === 0 || h === 0) return null;
+  const rect = first.getBoundingClientRect();
+  if (rect.width === 0 || rect.height === 0) return null;
+
   const snap = document.createElement('canvas');
-  snap.width = w;
-  snap.height = h;
+  snap.width = Math.max(1, Math.round(rect.width * (window.devicePixelRatio || 1)));
+  snap.height = Math.max(1, Math.round(rect.height * (window.devicePixelRatio || 1)));
   const ctx = snap.getContext('2d');
   if (!ctx) return null;
+
+  const sx = snap.width / rect.width;
+  const sy = snap.height / rect.height;
+  ctx.scale(sx, sy);
   for (const c of canvases) {
-    try { ctx.drawImage(c, 0, 0); } catch { /* skip tainted layers */ }
+    try { ctx.drawImage(c, 0, 0, rect.width, rect.height); } catch { /* ignore */ }
   }
-  snap.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:100;';
+
+  snap.style.position = 'absolute';
+  snap.style.left = '0';
+  snap.style.top = '0';
+  snap.style.width = `${rect.width}px`;
+  snap.style.height = `${rect.height}px`;
+  snap.style.pointerEvents = 'none';
+  snap.style.zIndex = '100';
   return snap;
 }
 
@@ -41,6 +47,7 @@ export function useTerminal(containerRef: React.RefObject<HTMLDivElement | null>
   const observerRef = useRef<ResizeObserver | null>(null);
   const prevVisibleRef = useRef(options.isVisible);
   const resizeSuppressedRef = useRef(options.resizeSuppressed ?? false);
+  const lastMeasuredContainerRef = useRef<{ width: number; height: number } | null>(null);
   // Track last dimensions sent to PTY to avoid redundant resizes (which cause flashes)
   const lastSentRef = useRef<{ cols: number; rows: number } | null>(null);
 
@@ -96,9 +103,10 @@ export function useTerminal(containerRef: React.RefObject<HTMLDivElement | null>
         if (resizeSuppressedRef.current) return;
         let snapshot: HTMLCanvasElement | null = null;
         try {
-          // Snapshot the current canvas contents before fit() clears the WebGL
-          // backbuffer. This keeps the old frame visible as an overlay while the
-          // shell processes SIGWINCH and redraws, eliminating the blank flash.
+          lastMeasuredContainerRef.current = {
+            width: container.offsetWidth,
+            height: container.offsetHeight,
+          };
           if (entry.ready) {
             snapshot = snapshotTerminalCanvas(container);
             if (snapshot) container.appendChild(snapshot);
@@ -133,9 +141,6 @@ export function useTerminal(containerRef: React.RefObject<HTMLDivElement | null>
           // New terminals: start receiving live output now
           activateTerminal(options.sessionId);
 
-          // Remove overlay once the shell's SIGWINCH redraw has been parsed and
-          // rendered. onWriteParsed fires after xterm processes the new data;
-          // one rAF after that ensures the canvas is actually painted.
           if (snapshot) {
             const snap = snapshot;
             let removed = false;
@@ -146,10 +151,12 @@ export function useTerminal(containerRef: React.RefObject<HTMLDivElement | null>
             };
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const term = entry.terminal as any;
-            if (typeof term.onWriteParsed === 'function') {
+            if (typeof term.onRender === 'function') {
+              const unsub = term.onRender(() => { unsub.dispose(); remove(); });
+            } else if (typeof term.onWriteParsed === 'function') {
               const unsub = term.onWriteParsed(() => { unsub.dispose(); remove(); });
             }
-            setTimeout(remove, 300); // fallback if onWriteParsed doesn't fire
+            setTimeout(remove, 150);
           }
         } catch {
           snapshot?.remove();
@@ -182,10 +189,22 @@ export function useTerminal(containerRef: React.RefObject<HTMLDivElement | null>
     requestAnimationFrame(() => {
       const container = containerRef.current;
       if (!container || container.offsetWidth === 0) return;
+      const measured = lastMeasuredContainerRef.current;
+      const sizeUnchanged = measured
+        ? measured.width === container.offsetWidth && measured.height === container.offsetHeight
+        : false;
+      if (sizeUnchanged) {
+        activateTerminal(options.sessionId);
+        return;
+      }
       const entry = terminalRef.current;
       if (!entry) return;
       const prevCols = entry.cols;
       const prevRows = entry.rows;
+      lastMeasuredContainerRef.current = {
+        width: container.offsetWidth,
+        height: container.offsetHeight,
+      };
       fitTerminal(options.sessionId);
       activateTerminal(options.sessionId);
       const { cols, rows } = entry;
@@ -210,6 +229,10 @@ export function useTerminal(containerRef: React.RefObject<HTMLDivElement | null>
     requestAnimationFrame(() => {
       const container = containerRef.current;
       if (!container || container.offsetWidth === 0) return;
+      lastMeasuredContainerRef.current = {
+        width: container.offsetWidth,
+        height: container.offsetHeight,
+      };
       fitTerminal(options.sessionId);
       activateTerminal(options.sessionId);
       const entry = terminalRef.current;

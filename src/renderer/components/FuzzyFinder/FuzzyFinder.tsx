@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { memo, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useLayoutStore } from '../../store/layout-store';
 import { useSessionStore } from '../../store/session-store';
 import { searchBuffer } from '../../lib/terminal-registry';
-import type { Tab } from '../../types/tab';
+import { useShallow } from 'zustand/react/shallow';
 
 interface SearchResult {
   tabId: string;
@@ -18,6 +18,16 @@ interface SearchResult {
     contextBefore: string[];
     contextAfter: string[];
   };
+}
+
+interface SearchTarget {
+  tabId: string;
+  tabLabel: string;
+  itemId: string;
+  itemIndex: number;
+  sessionId: string;
+  title: string;
+  cwd: string;
 }
 
 function highlightMatch(text: string, query: string): React.ReactNode {
@@ -60,50 +70,34 @@ function formatCwd(cwd: string): string {
   return cwd;
 }
 
-function searchAllTerminals(query: string, tabs: Tab[]): SearchResult[] {
-  const sessions = useSessionStore.getState().sessions;
+function searchAllTerminals(query: string, targets: SearchTarget[]): SearchResult[] {
   const results: SearchResult[] = [];
   const lowerQuery = query.toLowerCase();
 
-  for (const tab of tabs) {
-    for (let i = 0; i < tab.carouselItems.length; i++) {
-      const item = tab.carouselItems[i];
-      const session = sessions[item.sessionId];
-      if (!session) continue;
+  for (const target of targets) {
+    const titleMatch = target.title.toLowerCase().includes(lowerQuery);
+    const cwdMatch = target.cwd.toLowerCase().includes(lowerQuery);
 
-      const title = session.summary || formatCwd(session.cwd);
-      const cwd = session.cwd ?? '';
-      const base = { tabId: tab.id, tabLabel: tab.label, itemId: item.id, itemIndex: i, sessionId: item.sessionId, title, cwd };
-
-      // Title/cwd are instant — check first
-      const titleMatch = title.toLowerCase().includes(lowerQuery);
-      const cwdMatch = cwd.toLowerCase().includes(lowerQuery);
-
-      console.log('[fuzzy] query=%o title=%o titleMatch=%o cwdMatch=%o', query, title, titleMatch, cwdMatch);
-
-      // Buffer search is expensive — only run if title/cwd didn't match
-      // and query is long enough to be meaningful (>= 2 chars)
-      if (!titleMatch && !cwdMatch && query.length >= 2) {
-        const bufMatch = searchBuffer(item.sessionId, query, 1);
-        console.log('[fuzzy] bufferSearch result=%o', bufMatch);
-        if (bufMatch) {
-          results.push({
-            ...base, matchType: 'buffer',
-            bufferContext: {
-              matchLine: bufMatch.matchLine,
-              contextBefore: bufMatch.contextBefore,
-              contextAfter: bufMatch.contextAfter,
-            },
-          });
-          continue;
-        }
+    if (!titleMatch && !cwdMatch && query.length >= 2) {
+      const bufMatch = searchBuffer(target.sessionId, query, 1);
+      if (bufMatch) {
+        results.push({
+          ...target,
+          matchType: 'buffer',
+          bufferContext: {
+            matchLine: bufMatch.matchLine,
+            contextBefore: bufMatch.contextBefore,
+            contextAfter: bufMatch.contextAfter,
+          },
+        });
+        continue;
       }
+    }
 
-      if (titleMatch) {
-        results.push({ ...base, matchType: 'title' });
-      } else if (cwdMatch) {
-        results.push({ ...base, matchType: 'cwd' });
-      }
+    if (titleMatch) {
+      results.push({ ...target, matchType: 'title' });
+    } else if (cwdMatch) {
+      results.push({ ...target, matchType: 'cwd' });
     }
   }
 
@@ -113,10 +107,114 @@ function searchAllTerminals(query: string, tabs: Tab[]): SearchResult[] {
   return results;
 }
 
+interface ResultRowProps {
+  result: SearchResult;
+  index: number;
+  isSelected: boolean;
+  query: string;
+  showTabLabel: boolean;
+  navigate: (result: SearchResult) => void;
+  selectIndex: (index: number) => void;
+  lastMousePosRef: React.MutableRefObject<{ x: number; y: number }>;
+}
+
+const ResultRow = memo(function ResultRow({
+  result,
+  index,
+  isSelected,
+  query,
+  showTabLabel,
+  navigate,
+  selectIndex,
+  lastMousePosRef,
+}: ResultRowProps) {
+  return (
+    <button
+      className="w-full text-left cursor-pointer"
+      style={{
+        padding: '10px 12px',
+        borderRadius: 10,
+        color: isSelected ? '#f4f4f5' : 'rgba(255,255,255,0.7)',
+        background: isSelected ? 'rgba(255,255,255,0.09)' : 'transparent',
+        transition: 'background 80ms ease, color 80ms ease',
+        fontSize: 15,
+      }}
+      onClick={() => navigate(result)}
+      onMouseMove={(e) => {
+        if (e.clientX === lastMousePosRef.current.x && e.clientY === lastMousePosRef.current.y) return;
+        lastMousePosRef.current = { x: e.clientX, y: e.clientY };
+        selectIndex(index);
+      }}
+    >
+      <div className="flex items-center gap-2">
+        <svg
+          className="shrink-0"
+          width="16" height="16" viewBox="0 0 16 16" fill="none"
+          stroke={isSelected ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.35)'}
+          strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
+          style={{ transition: 'stroke 80ms ease' }}
+        >
+          <rect x="1" y="2" width="14" height="12" rx="2" />
+          <path d="M4 6l2.5 2L4 10" />
+          <line x1="8.5" y1="10" x2="12" y2="10" />
+        </svg>
+        {showTabLabel && (
+          <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)' }} className="shrink-0">
+            {result.tabLabel}
+          </span>
+        )}
+        <span className="truncate" style={{ fontSize: 15 }}>
+          {query.trim() && result.matchType === 'title'
+            ? highlightMatch(result.title, query)
+            : result.title}
+        </span>
+        {result.matchType === 'cwd' && query.trim() && (
+          <span className="truncate ml-auto" style={{ fontSize: 13, color: 'rgba(255,255,255,0.35)' }}>
+            {highlightMatch(formatCwd(result.cwd), query)}
+          </span>
+        )}
+      </div>
+      {result.bufferContext && query.trim() && (
+        <div
+          className="overflow-hidden font-mono"
+          style={{
+            marginTop: 6,
+            marginLeft: 24,
+            fontSize: 12.5,
+            lineHeight: 1.5,
+            color: 'rgba(255,255,255,0.35)',
+            maxHeight: 52,
+          }}
+        >
+          {result.bufferContext.contextBefore.map((line, i) => (
+            <div key={`b${i}`} className="truncate">{line}</div>
+          ))}
+          <div style={{ whiteSpace: 'pre-line', overflow: 'hidden' }}>
+            {highlightMatch(result.bufferContext.matchLine, query)}
+          </div>
+          {result.bufferContext.contextAfter.map((line, i) => (
+            <div key={`a${i}`} className="truncate">{line}</div>
+          ))}
+        </div>
+      )}
+    </button>
+  );
+});
+
 export function FuzzyFinder() {
   const open = useLayoutStore((s) => s.fuzzyFinderOpen);
   const setOpen = useLayoutStore((s) => s.setFuzzyFinderOpen);
   const tabs = useLayoutStore((s) => s.tabs);
+  const sessionMetadata = useSessionStore(useShallow((state) => {
+    const flat: string[] = [];
+    for (const tab of tabs) {
+      for (const item of tab.carouselItems) {
+        const session = state.sessions[item.sessionId];
+        flat.push(session?.summary ?? '', session?.cwd ?? '');
+      }
+    }
+    return flat;
+  }));
 
   const [query, setQuery] = useState('');
   const [selectedIdx, setSelectedIdx] = useState(0);
@@ -125,6 +223,27 @@ export function FuzzyFinder() {
   const lastMousePos = useRef({ x: 0, y: 0 });
   const resultsRef = useRef<HTMLDivElement>(null);
   const lastSearchRef = useRef(0);
+  const searchTargets = useMemo(() => {
+    const targets: SearchTarget[] = [];
+    let metaIndex = 0;
+    for (const tab of tabs) {
+      for (let i = 0; i < tab.carouselItems.length; i++) {
+        const item = tab.carouselItems[i];
+        const summary = sessionMetadata[metaIndex++] ?? '';
+        const cwd = sessionMetadata[metaIndex++] ?? '';
+        targets.push({
+          tabId: tab.id,
+          tabLabel: tab.label,
+          itemId: item.id,
+          itemIndex: i,
+          sessionId: item.sessionId,
+          title: summary || formatCwd(cwd || '~'),
+          cwd,
+        });
+      }
+    }
+    return targets;
+  }, [tabs, sessionMetadata]);
 
   // Focus on open; reset state on close so next open starts clean
   useEffect(() => {
@@ -150,7 +269,7 @@ export function FuzzyFinder() {
     const delay = Math.max(0, 50 - elapsed);
     const timer = setTimeout(() => {
       lastSearchRef.current = Date.now();
-      const r = searchAllTerminals(query.trim(), tabs);
+      const r = searchAllTerminals(query.trim(), searchTargets);
       setResults(prev => {
         // Preserve selection if the same item is still in results
         const prevSelected = prev[selectedIdx];
@@ -166,7 +285,7 @@ export function FuzzyFinder() {
       });
     }, delay);
     return () => clearTimeout(timer);
-  }, [query, open, tabs]);
+  }, [query, open, searchTargets, selectedIdx]);
 
   const displayResults = useMemo(() => {
     if (!query.trim()) return [];
@@ -180,6 +299,9 @@ export function FuzzyFinder() {
     store.carouselScrollTo(result.itemIndex);
     store.setCarouselZoomedOut(false);
     store.setFuzzyFinderOpen(false);
+  }, []);
+  const selectIndex = useCallback((index: number) => {
+    setSelectedIdx((current) => current === index ? current : index);
   }, []);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -317,77 +439,17 @@ export function FuzzyFinder() {
             </div>
           )}
           {displayResults.map((result, idx) => (
-            <button
+            <ResultRow
               key={`${result.tabId}-${result.itemId}`}
-              className="w-full text-left cursor-pointer"
-              style={{
-                padding: '10px 12px',
-                borderRadius: 10,
-                color: idx === selectedIdx ? '#f4f4f5' : 'rgba(255,255,255,0.7)',
-                background: idx === selectedIdx ? 'rgba(255,255,255,0.09)' : 'transparent',
-                transition: 'background 80ms ease, color 80ms ease',
-                fontSize: 15,
-              }}
-              onClick={() => navigate(result)}
-              onMouseMove={(e) => {
-                if (e.clientX === lastMousePos.current.x && e.clientY === lastMousePos.current.y) return;
-                lastMousePos.current = { x: e.clientX, y: e.clientY };
-                if (idx !== selectedIdx) setSelectedIdx(idx);
-              }}
-            >
-              <div className="flex items-center gap-2">
-                {/* Terminal icon */}
-                <svg
-                  className="shrink-0"
-                  width="16" height="16" viewBox="0 0 16 16" fill="none"
-                  stroke={idx === selectedIdx ? 'rgba(255,255,255,0.7)' : 'rgba(255,255,255,0.35)'}
-                  strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
-                  style={{ transition: 'stroke 80ms ease' }}
-                >
-                  <rect x="1" y="2" width="14" height="12" rx="2" />
-                  <path d="M4 6l2.5 2L4 10" />
-                  <line x1="8.5" y1="10" x2="12" y2="10" />
-                </svg>
-                {tabs.length > 1 && (
-                  <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)' }} className="shrink-0">
-                    {result.tabLabel}
-                  </span>
-                )}
-                <span className="truncate" style={{ fontSize: 15 }}>
-                  {query.trim() && result.matchType === 'title'
-                    ? highlightMatch(result.title, query)
-                    : result.title}
-                </span>
-                {result.matchType === 'cwd' && query.trim() && (
-                  <span className="truncate ml-auto" style={{ fontSize: 13, color: 'rgba(255,255,255,0.35)' }}>
-                    {highlightMatch(formatCwd(result.cwd), query)}
-                  </span>
-                )}
-              </div>
-              {result.bufferContext && query.trim() && (
-                <div
-                  className="overflow-hidden font-mono"
-                  style={{
-                    marginTop: 6,
-                    marginLeft: 24,
-                    fontSize: 12.5,
-                    lineHeight: 1.5,
-                    color: 'rgba(255,255,255,0.35)',
-                    maxHeight: 52,
-                  }}
-                >
-                  {result.bufferContext.contextBefore.map((line, i) => (
-                    <div key={`b${i}`} className="truncate">{line}</div>
-                  ))}
-                  <div style={{ whiteSpace: 'pre-line', overflow: 'hidden' }}>
-                    {highlightMatch(result.bufferContext.matchLine, query)}
-                  </div>
-                  {result.bufferContext.contextAfter.map((line, i) => (
-                    <div key={`a${i}`} className="truncate">{line}</div>
-                  ))}
-                </div>
-              )}
-            </button>
+              result={result}
+              index={idx}
+              isSelected={idx === selectedIdx}
+              query={query}
+              showTabLabel={tabs.length > 1}
+              navigate={navigate}
+              selectIndex={selectIndex}
+              lastMousePosRef={lastMousePos}
+            />
           ))}
         </div>
       </div>

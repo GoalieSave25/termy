@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSettingsStore } from '../../../store/settings-store';
 import type { KeybindingAction, KeyCombo } from '../../../types/settings';
 import {
-  DEFAULT_KEYBINDINGS,
   ACTION_META,
   formatKeyCombo,
   type ActionCategory,
@@ -32,7 +31,7 @@ function KeybindingBadge({ combo, recording, onClick }: { combo: KeyCombo; recor
         border: recording ? '1px solid rgba(110,203,99,0.4)' : '1px solid rgba(255,255,255,0.08)',
         borderRadius: 5,
         padding: '3px 8px',
-        transition: 'all 80ms ease',
+        transition: 'color 80ms ease, background-color 80ms ease, border-color 80ms ease',
         whiteSpace: 'nowrap',
         animation: recording ? 'keybind-pulse 1.5s ease-in-out infinite' : 'none',
       }}
@@ -209,7 +208,7 @@ export function KeybindingsSection() {
               border: '1px solid rgba(255,255,255,0.08)',
               borderRadius: 5,
               padding: '3px 8px',
-              transition: 'all 80ms ease',
+              transition: 'color 80ms ease, background-color 80ms ease, border-color 80ms ease',
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.color = '#e4e4e7';

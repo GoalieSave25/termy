@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { memo, useEffect } from 'react';
 import { TabBar } from './components/TabBar/TabBar';
 import { CarouselLayout } from './components/CarouselLayout/CarouselLayout';
 import { StatusBar } from './components/StatusBar/StatusBar';
@@ -9,16 +9,40 @@ import { useFileDrop } from './hooks/useFileDrop';
 import { usePaneSummaries } from './hooks/usePaneSummaries';
 import { useClaudeDetector } from './hooks/useClaudeDetector';
 import { useStatePersistence } from './hooks/useStatePersistence';
+import { useFrameBudgetLogger } from './hooks/useFrameBudgetLogger';
 import { FuzzyFinder } from './components/FuzzyFinder/FuzzyFinder';
 import { Settings } from './components/Settings/Settings';
 import { useSessionStore } from './store/session-store';
 import { useSettingsStore } from './store/settings-store';
 import { rebuildWebgl, applyTerminalSettings } from './lib/terminal-registry';
+import type { Tab } from './types/tab';
+import { useShallow } from 'zustand/react/shallow';
+
+interface TabViewportProps {
+  tab: Tab;
+  isActive: boolean;
+}
+
+const TabViewport = memo(
+  function TabViewport({ tab, isActive }: TabViewportProps) {
+    return (
+      <div
+        className="absolute inset-0"
+        style={{ display: isActive ? 'block' : 'none' }}
+      >
+        <CarouselLayout tab={tab} isVisible={isActive} />
+      </div>
+    );
+  },
+  (prev, next) => prev.tab === next.tab && prev.isActive === next.isActive,
+);
 
 export function App() {
-  const tabs = useLayoutStore((s) => s.tabs);
-  const activeTabId = useLayoutStore((s) => s.activeTabId);
-  const initFirstTab = useLayoutStore((s) => s.initFirstTab);
+  const { tabs, activeTabId, initFirstTab } = useLayoutStore(useShallow((s) => ({
+    tabs: s.tabs,
+    activeTabId: s.activeTabId,
+    initFirstTab: s.initFirstTab,
+  })));
 
   useKeyboardShortcuts();
   useImagePaste();
@@ -26,6 +50,7 @@ export function App() {
   usePaneSummaries();
   useClaudeDetector();
   useStatePersistence();
+  useFrameBudgetLogger();
 
   // Init settings before first tab so terminal options are ready
   useEffect(() => {
@@ -84,16 +109,7 @@ export function App() {
       <TabBar />
       <div className="flex-1 min-h-0 relative">
         {tabs.map((tab) => {
-          const isActive = tab.id === activeTabId;
-          return (
-            <div
-              key={tab.id}
-              className="absolute inset-0"
-              style={{ display: isActive ? 'block' : 'none' }}
-            >
-              <CarouselLayout tab={tab} isVisible={isActive} />
-            </div>
-          );
+          return <TabViewport key={tab.id} tab={tab} isActive={tab.id === activeTabId} />;
         })}
       </div>
       <StatusBar />

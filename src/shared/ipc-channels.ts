@@ -18,6 +18,7 @@ export const IpcInvoke = {
 /** Renderer -> Main (send, fire-and-forget) */
 export const IpcSend = {
   PTY_INPUT: 'pty:input',
+  DOCK_BOUNCE_INFORMATIONAL: 'dock:bounce-informational',
 } as const;
 
 /** Main -> Renderer (send from main, on in renderer) */

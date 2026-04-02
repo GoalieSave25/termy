@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useLayoutStore } from '../store/layout-store';
 import { useSessionStore } from '../store/session-store';
 import { onTitleChange } from '../lib/terminal-registry';
+import { clearSessionInteraction, hasRecentSessionInteraction } from '../lib/session-interactions';
 
 function isClaudeTitle(title: string): boolean {
   const lower = title.toLowerCase();
@@ -10,8 +11,17 @@ function isClaudeTitle(title: string): boolean {
 }
 
 function isSpinnerChar(cp: number): boolean {
-  // Braille patterns (U+2800–U+28FF) — used by Claude Code's spinner
+  // Braille patterns (U+2800–U+28FF) — used by Claude Code / Codex spinners
   return cp >= 0x2800 && cp <= 0x28FF;
+}
+
+function markClaudeCompleted(sessionId: string): void {
+  if (hasRecentSessionInteraction(sessionId)) return;
+  const session = useSessionStore.getState().sessions[sessionId];
+  if (session?.claudeCompleted) return;
+  clearSessionInteraction(sessionId);
+  useSessionStore.getState().updateSession(sessionId, { claudeCompleted: true });
+  window.termyApi.notification.bounceInformational();
 }
 
 export function useClaudeDetector() {
@@ -22,7 +32,6 @@ export function useClaudeDetector() {
   const detectedViaTitle = useRef<Set<string>>(new Set());
   // Track sessions that have shown a spinner title (to detect completion)
   const spinnerSeenRef = useRef<Set<string>>(new Set());
-
   useEffect(() => {
     const interval = setInterval(() => {
       const layoutState = useLayoutStore.getState();
@@ -41,7 +50,6 @@ export function useClaudeDetector() {
         if (!trackedSessions.current.has(sessionId)) {
           trackedSessions.current.add(sessionId);
           const unsub = onTitleChange(sessionId, (title) => {
-            console.log('[termy] title:', sessionId, JSON.stringify(title));
             const s = useSessionStore.getState().sessions[sessionId];
             if (!s) return;
 
@@ -61,16 +69,14 @@ export function useClaudeDetector() {
             } else if (firstCp === 0x2733 && spinnerSeenRef.current.has(sessionId)) {
               // ✳ after spinner = Claude finished its turn
               spinnerSeenRef.current.delete(sessionId);
-              // Don't highlight if this terminal is already focused
-              const layout = useLayoutStore.getState();
-              const activeTab = layout.tabs.find(t => t.id === layout.activeTabId);
-              const focusedItem = activeTab?.carouselItems[activeTab.carouselFocusedIndex];
-              if (!focusedItem || focusedItem.sessionId !== sessionId || layout.carouselZoomedOut) {
-                useSessionStore.getState().updateSession(sessionId, { claudeCompleted: true });
-              }
+              markClaudeCompleted(sessionId);
+            } else if (spinnerSeenRef.current.has(sessionId)) {
+              // Spinner stopped without ✳ (e.g. Codex CLI) — treat as completed
+              spinnerSeenRef.current.delete(sessionId);
+              markClaudeCompleted(sessionId);
             }
 
-            // Text-based Claude detection (title contains "claude")
+            // Text-based detection (title contains "claude", or has spinner/✳ prefix)
             const isClaude = isClaudeTitle(title) || isSpinnerChar(firstCp) || firstCp === 0x2733;
             if (!s.isClaudeSession && isClaude) {
               detectedViaTitle.current.add(sessionId);
@@ -79,7 +85,7 @@ export function useClaudeDetector() {
                 claudeState: 'active',
               });
             } else if (s.isClaudeSession && !isClaude) {
-              // Title changed away from Claude (e.g. back to shell prompt)
+              // Title changed away from AI CLI (e.g. back to shell prompt)
               detectedViaTitle.current.delete(sessionId);
               spinnerSeenRef.current.delete(sessionId);
               useSessionStore.getState().updateSession(sessionId, {

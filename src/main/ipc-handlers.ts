@@ -1,4 +1,4 @@
-import { ipcMain, shell, Notification } from 'electron';
+import { app, ipcMain, shell, Notification } from 'electron';
 import { IpcInvoke, IpcSend } from '../shared/ipc-channels';
 import type { PtyCreateRequest, PtyResizeRequest } from '../shared/types';
 import { PtyManager } from './pty-manager';
@@ -71,5 +71,10 @@ export function registerIpcHandlers(ptyManager: PtyManager) {
 
   ipcMain.on(IpcSend.PTY_INPUT, (_event, sessionId: string, data: string) => {
     ptyManager.write(sessionId, data);
+  });
+
+  ipcMain.on(IpcSend.DOCK_BOUNCE_INFORMATIONAL, () => {
+    if (process.platform !== 'darwin') return;
+    app.dock.bounce('informational');
   });
 }

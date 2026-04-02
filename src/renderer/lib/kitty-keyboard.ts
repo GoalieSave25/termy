@@ -57,6 +57,13 @@ export function encodeKittyKey(event: KeyboardEvent, flags: number): string | nu
   const key = event.key;
   const mod = modifierCode(event);
 
+  // Preserve the long-standing reverse-tab sequence for plain Shift+Tab.
+  // Many terminal apps still only recognize CSI Z here, even when they
+  // temporarily enable Kitty disambiguation for other keys like Shift+Space.
+  if (key === 'Tab' && event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
+    return '\x1b[Z';
+  }
+
   // Special keys — only encode when modifiers are present
   if (hasModifier(event)) {
     switch (key) {

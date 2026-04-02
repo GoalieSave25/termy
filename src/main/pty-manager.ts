@@ -6,6 +6,7 @@ import { BrowserWindow } from 'electron';
 const execAsync = promisify(exec);
 import { IpcOn } from '../shared/ipc-channels';
 import type { PtyCreateRequest, PtyCreateResponse } from '../shared/types';
+import { sanitizeShellEnv } from './shell-env';
 
 interface PtyEntry {
   process: pty.IPty;
@@ -22,6 +23,8 @@ export class PtyManager {
   private destroyed = new Set<string>();
   private window: BrowserWindow | null = null;
   private notificationSocketPath: string | null = null;
+  /** Resolved login shell environment — set once at app startup. */
+  private shellEnv: Record<string, string> = process.env as Record<string, string>;
 
   setWindow(win: BrowserWindow) {
     this.window = win;
@@ -31,22 +34,26 @@ export class PtyManager {
     this.notificationSocketPath = path;
   }
 
-  create(request: PtyCreateRequest): PtyCreateResponse {
-    const shell = request.shell ?? process.env.SHELL ?? '/bin/zsh';
+  setShellEnv(env: Record<string, string>) {
+    this.shellEnv = sanitizeShellEnv(env);
+  }
 
-    console.error(`[PTY] spawning shell=${shell} cwd=${request.cwd ?? process.env.HOME} cols=${request.cols} rows=${request.rows}`);
-    const ptyProcess = pty.spawn(shell, [], {
+  create(request: PtyCreateRequest): PtyCreateResponse {
+    const shell = request.shell ?? this.shellEnv.SHELL ?? process.env.SHELL ?? '/bin/zsh';
+
+    console.error(`[PTY] spawning shell=${shell} cwd=${request.cwd ?? this.shellEnv.HOME} cols=${request.cols} rows=${request.rows}`);
+    const ptyProcess = pty.spawn(shell, ['--login'], {
       name: 'xterm-256color',
       cols: request.cols,
       rows: request.rows,
-      cwd: (request.cwd === '~' ? process.env.HOME : request.cwd) ?? process.env.HOME ?? '/',
-      env: {
-        ...process.env,
+      cwd: (request.cwd === '~' ? this.shellEnv.HOME : request.cwd) ?? this.shellEnv.HOME ?? '/',
+      env: sanitizeShellEnv({
+        ...this.shellEnv,
         ...request.env,
         TERM_PROGRAM: 'Termy',
         COLORTERM: 'truecolor',
         ...(this.notificationSocketPath ? { TERMY_NOTIFICATION_SOCKET: this.notificationSocketPath } : {}),
-      } as Record<string, string>,
+      }),
     });
 
     // Batch output at ~4ms intervals to reduce IPC overhead

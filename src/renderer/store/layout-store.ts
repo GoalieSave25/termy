@@ -117,6 +117,7 @@ interface LayoutState {
   searchOpenPaneId: string | null;
   carouselZoomedOut: boolean;
   carouselProgress: number;
+  carouselScrollFraction: number;
   visibleCount: number;
   isMaximized: boolean;
   fuzzyFinderOpen: boolean;
@@ -153,11 +154,13 @@ interface LayoutState {
   // Carousel actions
   setCarouselZoomedOut: (zoomed: boolean) => void;
   setCarouselProgress: (progress: number) => void;
+  setCarouselScrollFraction: (fraction: number) => void;
   carouselAddTerminal: () => Promise<string>;
   carouselRemoveTerminal: (itemId: string) => void;
   carouselReorder: (fromIndex: number, toIndex: number) => void;
   carouselScrollTo: (index: number) => void;
   carouselFocusItem: (itemId: string) => void;
+  carouselUnfocus: () => void;
 
   // Visible count
   setVisibleCount: (n: number) => void;
@@ -184,6 +187,7 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
   searchOpenPaneId: null,
   carouselZoomedOut: false,
   carouselProgress: 0,
+  carouselScrollFraction: 0,
   visibleCount: 2,
   isMaximized: false,
   fuzzyFinderOpen: false,
@@ -355,7 +359,7 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
   },
 
   setActiveTab: (tabId: TabId) => {
-    set({ activeTabId: tabId, carouselZoomedOut: false, isMaximized: false });
+    set({ activeTabId: tabId, carouselZoomedOut: false, isMaximized: false, carouselScrollFraction: 0 });
   },
 
   renameTab: (tabId: TabId, label: string, manual?: boolean) => {
@@ -391,7 +395,8 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
   focusPrevious: () => {
     const tab = get().getActiveTab();
     if (!tab) return;
-    const newIndex = (tab.carouselFocusedIndex - 1 + tab.carouselItems.length) % tab.carouselItems.length;
+    const idx = tab.carouselFocusedIndex < 0 ? 0 : tab.carouselFocusedIndex;
+    const newIndex = (idx - 1 + tab.carouselItems.length) % tab.carouselItems.length;
     get().carouselScrollTo(newIndex);
   },
 
@@ -452,6 +457,9 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
   },
   setCarouselProgress: (progress: number) => {
     set({ carouselProgress: progress });
+  },
+  setCarouselScrollFraction: (fraction: number) => {
+    set({ carouselScrollFraction: fraction });
   },
 
   carouselAddTerminal: async () => {
@@ -570,6 +578,15 @@ export const useLayoutStore = create<LayoutState>((set, get) => ({
         }),
       };
     });
+  },
+
+  carouselUnfocus: () => {
+    set((state) => ({
+      tabs: state.tabs.map((t) => {
+        if (t.id !== state.activeTabId) return t;
+        return { ...t, carouselFocusedIndex: -1, carouselFocusedItemId: '' };
+      }),
+    }));
   },
 
   // Visible count

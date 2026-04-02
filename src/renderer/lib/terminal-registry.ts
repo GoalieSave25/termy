@@ -2,8 +2,8 @@ import { Terminal as XtermTerminal } from '@xterm/xterm';
 import { FitAddon as XtermFitAddon } from '@xterm/addon-fit';
 import { SearchAddon } from '@xterm/addon-search';
 import type { ISearchOptions } from '@xterm/addon-search';
+import { CanvasAddon } from '@xterm/addon-canvas';
 import { SerializeAddon } from '@xterm/addon-serialize';
-import { WebglAddon } from '@xterm/addon-webgl';
 // WebLinksAddon removed — replaced by custom multi-line link provider below
 import { Terminal as GhosttyTerminal, FitAddon as GhosttyFitAddon } from 'ghostty-web';
 import { DARK_THEME } from './theme';
@@ -21,7 +21,7 @@ interface TerminalEntry {
   fitAddon: AnyFitAddon;
   searchAddon: SearchAddon | null;
   serializeAddon: SerializeAddon | null;
-  webglAddon: WebglAddon | null;
+  canvasAddon: CanvasAddon | null;
   opened: boolean;
   /** Hold back output until the first resize so the shell prompt renders at the correct width */
   ready: boolean;
@@ -32,9 +32,6 @@ interface TerminalEntry {
   /** Height of one cell in CSS pixels — set during first fit, used to compute headroom offset */
   cellHeightPx: number;
 }
-
-/** Once WebGL fails for any terminal, all terminals skip it (VS Code pattern). */
-let webglAvailable = true;
 
 const registry = new Map<string, TerminalEntry>();
 const cwdCallbacks = new Map<string, Set<(cwd: string) => void>>();
@@ -50,6 +47,17 @@ const pendingExits = new Set<string>();
 
 // Queued restored buffer content to replay when a terminal activates
 const restoredContent = new Map<string, string>();
+
+function attachCanvasRenderer(entry: TerminalEntry): void {
+  if (USE_GHOSTTY || entry.canvasAddon) return;
+  try {
+    const addon = new CanvasAddon();
+    entry.terminal.loadAddon(addon);
+    entry.canvasAddon = addon;
+  } catch (err) {
+    console.warn('[terminal] Canvas addon failed to load, leaving default renderer active:', err);
+  }
+}
 
 // Regex to match Kitty keyboard protocol CSI sequences in PTY output:
 //   CSI > flags u  (push)    CSI < count u  (pop)    CSI ? u  (query)
@@ -162,7 +170,7 @@ export function attachTerminal(sessionId: string, container: HTMLDivElement): Te
   let fitAddon: AnyFitAddon;
   let searchAddon: SearchAddon | null = null;
   let serializeAddon: SerializeAddon | null = null;
-  let webglAddon: WebglAddon | null = null;
+  let canvasAddon: CanvasAddon | null = null;
   let reparentEl: HTMLElement | undefined;
 
   const termSettings = useSettingsStore.getState().terminal;
@@ -213,10 +221,14 @@ export function attachTerminal(sessionId: string, container: HTMLDivElement): Te
       // URL click handler — ghostty-web has no WebLinksAddon, so detect URLs
       // in the terminal buffer when the user clicks and open them.
       let mouseDownPos: { x: number; y: number } | null = null;
+      let wasFocusedOnMouseDown = false;
       inner.addEventListener('mousedown', (e: MouseEvent) => {
         mouseDownPos = { x: e.clientX, y: e.clientY };
+        wasFocusedOnMouseDown = inner.contains(document.activeElement);
       }, true);
       inner.addEventListener('click', (e: MouseEvent) => {
+        // Only follow links if the terminal was already focused before this click
+        if (!wasFocusedOnMouseDown) return;
         // Only treat as a click if the mouse didn't move (not a drag/selection)
         if (!mouseDownPos) return;
         const dx = e.clientX - mouseDownPos.x;
@@ -327,6 +339,10 @@ export function attachTerminal(sessionId: string, container: HTMLDivElement): Te
     terminal.loadAddon(xtermFit);
     terminal.loadAddon(searchAddon);
     terminal.loadAddon(serializeAddon);
+    // Track whether terminal was focused at mousedown — used to suppress link
+    // activation when the first click is just focusing an unfocused terminal.
+    let xtermWasFocused = false;
+
     // Custom link provider that joins wrapped lines to detect multi-line URLs.
     // Replaces WebLinksAddon which only detects URLs within a single line.
     terminal.registerLinkProvider({
@@ -365,7 +381,7 @@ export function attachTerminal(sessionId: string, container: HTMLDivElement): Te
               end: { x: endPos.col + 1, y: endPos.line + 1 },
             },
             text: match[0],
-            activate() { window.termyApi.shell.openExternal(this.text); },
+            activate() { if (xtermWasFocused) window.termyApi.shell.openExternal(this.text); },
           });
         }
         callback(links.length > 0 ? links : undefined);
@@ -404,15 +420,23 @@ export function attachTerminal(sessionId: string, container: HTMLDivElement): Te
       }
     );
 
+    let kittyHandledKeydown = false;
     terminal.attachCustomKeyEventHandler((ev: KeyboardEvent) => {
       if (kittyState.activeFlags === 0) return true;
-      if (ev.type !== 'keydown') return true;
+      if (ev.type !== 'keydown') {
+        // Only suppress keypress/keyup if the Kitty encoder handled the keydown.
+        // Plain characters (a-z, 0-9, etc.) aren't Kitty-encoded — xterm.js
+        // defers those from keydown to keypress, so we must let them through.
+        return !kittyHandledKeydown;
+      }
 
       const encoded = encodeKittyKey(ev, kittyState.activeFlags);
       if (encoded !== null) {
         window.termyApi.pty.sendInput(sessionId, encoded);
+        kittyHandledKeydown = true;
         return false;
       }
+      kittyHandledKeydown = false;
       return true;
     });
 
@@ -487,28 +511,14 @@ export function attachTerminal(sessionId: string, container: HTMLDivElement): Te
     });
 
     terminal.open(container);
+    canvasAddon = new CanvasAddon();
+    terminal.loadAddon(canvasAddon);
 
-    // Try WebGL renderer — handle context loss gracefully (VS Code pattern).
-    // Chromium limits active WebGL contexts to ~16 per renderer process;
-    // exceeding this silently kills the oldest context.
-    if (webglAvailable) {
-      try {
-        webglAddon = new WebglAddon();
-        webglAddon.onContextLoss(() => {
-          console.warn(`[terminal] WebGL context lost for session ${sessionId}, falling back to DOM renderer`);
-          webglAddon?.dispose();
-          webglAddon = null;
-          const entry = registry.get(sessionId);
-          if (entry) entry.webglAddon = null;
-        });
-        terminal.loadAddon(webglAddon);
-      } catch {
-        console.warn('[terminal] WebGL addon failed to load, disabling for all future terminals');
-        webglAddon?.dispose();
-        webglAddon = null;
-        webglAvailable = false;
-      }
-    }
+    // Track focus state at mousedown so link activation is suppressed when
+    // the click is just focusing an unfocused terminal.
+    container.addEventListener('mousedown', () => {
+      xtermWasFocused = container.contains(document.activeElement);
+    }, true);
 
     // Sub-pixel smooth scrolling setup: render N+1 rows so the trailing
     // edge has content to reveal during fractional-line CSS transforms.
@@ -543,7 +553,7 @@ export function attachTerminal(sessionId: string, container: HTMLDivElement): Te
       // Skip if the final dimensions (with headroom) would be unchanged.
       // Without this guard, origFit() always sees N+1 rows vs proposed N rows
       // and triggers a clear() + resize(N) → resize(N+1) bounce that can
-      // flash the WebGL canvas blank for one compositing frame.
+      // flash the renderer blank for one compositing frame.
       const proposed = xtermFit.proposeDimensions?.();
       if (proposed && proposed.cols === terminal.cols && proposed.rows + 1 === terminal.rows) {
         return;
@@ -701,7 +711,18 @@ export function attachTerminal(sessionId: string, container: HTMLDivElement): Te
     });
   }
 
-  entry = { terminal, fitAddon, searchAddon, serializeAddon, webglAddon, opened: true, ready: false, reparentEl, smoothScrollRows: USE_GHOSTTY ? 0 : 1, cellHeightPx: 0 };
+  entry = {
+    terminal,
+    fitAddon,
+    searchAddon,
+    serializeAddon,
+    canvasAddon,
+    opened: true,
+    ready: false,
+    reparentEl,
+    smoothScrollRows: USE_GHOSTTY ? 0 : 1,
+    cellHeightPx: 0,
+  };
   registry.set(sessionId, entry);
 
   // Don't replay pending output here — wait for activateTerminal() after
@@ -745,7 +766,10 @@ export function activateTerminal(sessionId: string): void {
 export function disposeTerminal(sessionId: string): void {
   const entry = registry.get(sessionId);
   if (!entry) return;
-  entry.webglAddon?.dispose();
+  if (entry.canvasAddon) {
+    try { entry.canvasAddon.dispose(); } catch { /* ignore */ }
+    entry.canvasAddon = null;
+  }
   entry.terminal.dispose();
   registry.delete(sessionId);
   kittyStates.delete(sessionId);
@@ -758,36 +782,20 @@ export function disposeTerminal(sessionId: string): void {
   searchCursors.delete(sessionId);
 }
 
+/**
+ * Canvas is the only xterm renderer path now, so this is a no-op kept for
+ * compatibility with existing callers during transition.
+ */
+export function setPreferredWebglSession(_sessionId: string | null): void {
+  // no-op
+}
+
 
 /**
- * Rebuild WebGL renderers for all terminals after system sleep/wake.
- * GPU textures get corrupted on resume but no webglcontextlost event fires,
- * so we proactively dispose and recreate the addon.
+ * Canvas renderers do not need explicit rebuild on resume.
  */
 export function rebuildWebgl(): void {
-  if (!webglAvailable) return;
-  for (const [sessionId, entry] of registry) {
-    // Dispose old WebGL addon if present
-    if (entry.webglAddon) {
-      try { entry.webglAddon.dispose(); } catch { /* ignore */ }
-      entry.webglAddon = null;
-    }
-    // Recreate
-    try {
-      const addon = new WebglAddon();
-      addon.onContextLoss(() => {
-        console.warn(`[terminal] WebGL context lost for session ${sessionId}, falling back to DOM renderer`);
-        addon.dispose();
-        entry.webglAddon = null;
-      });
-      entry.terminal.loadAddon(addon);
-      entry.webglAddon = addon;
-    } catch {
-      console.warn('[terminal] WebGL rebuild failed, disabling for all terminals');
-      webglAvailable = false;
-      break;
-    }
-  }
+  // no-op
 }
 
 /**

@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useLayoutStore } from '../../store/layout-store';
+import { useSessionStore } from '../../store/session-store';
+import { useShallow } from 'zustand/react/shallow';
 
 interface ContextMenu {
   tabId: string;
@@ -25,14 +27,27 @@ function getTabTranslateX(
 }
 
 export function TabBar() {
-  const tabs = useLayoutStore((s) => s.tabs);
-  const activeTabId = useLayoutStore((s) => s.activeTabId);
-  const setActiveTab = useLayoutStore((s) => s.setActiveTab);
-  const createTab = useLayoutStore((s) => s.createTab);
-  const closeTab = useLayoutStore((s) => s.closeTab);
-  const reorderTab = useLayoutStore((s) => s.reorderTab);
-  const setDraggingTab = useLayoutStore((s) => s.setDraggingTab);
-  const carouselAddTerminal = useLayoutStore((s) => s.carouselAddTerminal);
+  const {
+    tabs,
+    activeTabId,
+    setActiveTab,
+    createTab,
+    closeTab,
+    reorderTab,
+    setDraggingTab,
+  } = useLayoutStore(useShallow((s) => ({
+    tabs: s.tabs,
+    activeTabId: s.activeTabId,
+    setActiveTab: s.setActiveTab,
+    createTab: s.createTab,
+    closeTab: s.closeTab,
+    reorderTab: s.reorderTab,
+    setDraggingTab: s.setDraggingTab,
+  })));
+
+  const completedByTab = useSessionStore(useShallow((state) => tabs.map(
+    (tab) => tab.carouselItems.some((item) => Boolean(state.sessions[item.sessionId]?.claudeCompleted)),
+  )));
 
   const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
   const [insertionIndex, setInsertionIndex] = useState<number | null>(null);
@@ -236,7 +251,6 @@ export function TabBar() {
                 const startX = e.clientX;
                 const startY = e.clientY;
                 let dragging = false;
-                let popDone = false;
                 let curInsertIdx = tabIndex;
 
                 clickAnimRef.current = { tabId: tab.id, startY, isLiftingOff: false };
@@ -266,13 +280,11 @@ export function TabBar() {
                   el.style.position = 'relative';
                   el.style.zIndex = '50';
                   el.style.color = 'rgba(255, 255, 255, 0.9)';
-                  el.style.transition = 'scale 300ms cubic-bezier(0.2, 0, 0, 1.1), opacity 300ms ease, background 300ms ease, backdrop-filter 300ms ease';
+                  el.style.transition = 'scale 300ms cubic-bezier(0.2, 0, 0, 1.1), opacity 300ms ease, background-color 300ms ease';
                   el.style.scale = '1.35';
                   el.style.translate = `${dx}px 0`;
                   el.style.opacity = '1';
                   el.style.background = '#181818';
-                  el.style.backdropFilter = 'blur(2px)';
-                  (el.style as any).webkitBackdropFilter = 'blur(2px)';
                   setDraggingTab(true);
                   setTimeout(() => {
                     if (clickAnimRef.current?.tabId === tab.id) {
@@ -349,13 +361,11 @@ export function TabBar() {
                       gapCenter = cachedRects[curInsertIdx].left + cachedRects[curInsertIdx].width - cachedTabWidth / 2;
                     }
                     const targetX = gapCenter - cachedRects[tabIndex].mid;
-                    el.style.transition = 'translate 400ms cubic-bezier(0.2, 0, 0, 1), scale 400ms cubic-bezier(0.2, 0, 0, 1), opacity 400ms ease, background 400ms ease, backdrop-filter 400ms ease';
+                    el.style.transition = 'translate 400ms cubic-bezier(0.2, 0, 0, 1), scale 400ms cubic-bezier(0.2, 0, 0, 1), opacity 400ms ease, background-color 400ms ease';
                     el.style.translate = `${targetX}px 0`;
                     el.style.scale = '1';
                     el.style.opacity = '1';
                     el.style.background = '';
-                    el.style.backdropFilter = '';
-                    (el.style as any).webkitBackdropFilter = '';
 
                     // After animation, clean up and finalize reorder
                     setTimeout(() => {
@@ -412,7 +422,7 @@ export function TabBar() {
               {isRenaming ? (
                 <input
                   ref={renameInputRef}
-                  className="bg-transparent outline-none text-xs w-full min-w-0"
+                  className="bg-transparent outline-none w-full min-w-0"
                   style={{ color: 'rgba(255,255,255,0.9)' }}
                   value={renameValue}
                   onChange={(e) => setRenameValue(e.target.value)}
@@ -423,7 +433,28 @@ export function TabBar() {
                   }}
                 />
               ) : (
-                <span className="truncate max-w-48">{tab.label}</span>
+                <>
+                  <span className="truncate max-w-48">{tab.label}</span>
+                  {completedByTab[tabIndex] && (
+                    <div className="relative shrink-0" style={{ width: 8, height: 8 }}>
+                      <div
+                        className="absolute inset-0 rounded-full"
+                        style={{
+                          background: '#2DA1FD',
+                          animation: 'claude-dot-ring 2s ease-out infinite',
+                        }}
+                      />
+                      <div
+                        className="absolute inset-0 rounded-full"
+                        style={{
+                          background: '#2DA1FD',
+                          animation: 'claude-dot-pulse 2s ease-in-out infinite',
+                          boxShadow: '0 0 3px rgba(45, 161, 253, 0.4)',
+                        }}
+                      />
+                    </div>
+                  )}
+                </>
               )}
             </div>
           );
@@ -521,7 +552,7 @@ export function TabBar() {
               <button
                 className="px-3 h-7 rounded-md text-xs font-medium text-gray-300
                   bg-white/5 hover:bg-white/10
-                  active:scale-95 transition-all duration-150 cursor-pointer"
+                  active:scale-95 transition-[background-color,transform] duration-150 cursor-pointer"
                 onClick={() => setConfirmClose(null)}
               >
                 Cancel
@@ -529,7 +560,7 @@ export function TabBar() {
               <button
                 className="px-3 h-7 rounded-md text-xs font-medium text-white
                   bg-red-500/80 hover:bg-red-500
-                  active:scale-95 transition-all duration-150 cursor-pointer"
+                  active:scale-95 transition-[background-color,transform] duration-150 cursor-pointer"
                 onClick={() => {
                   closeTab(confirmClose);
                   setConfirmClose(null);

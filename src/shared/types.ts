@@ -73,6 +73,7 @@ export interface TermyApi {
   };
   notification: {
     show(opts: { title: string; body: string }): Promise<void>;
+    bounceInformational(): void;
     onClaude(callback: (data: ClaudeNotification) => void): () => void;
   };
   persistence: {
